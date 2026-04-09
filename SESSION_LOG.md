@@ -61,3 +61,30 @@
 - Set `KIS_APP_KEY` and `KIS_APP_SECRET` in Render
 - Update `config.js` `realtimeUrl`
 - Push and verify public live updates
+
+## 2026-04-10
+
+### Realtime relay deployment completed
+
+- Deployed realtime relay to Render free web service.
+- Production relay URL: `https://oo-l347.onrender.com`
+- `/health` checked in browser and confirmed `ok: true`, `hasCredentials: true`.
+
+### Frontend config
+
+- Updated `config.js` `realtimeUrl` to `https://oo-l347.onrender.com/stream`.
+
+### Verified
+
+- Render deployment status showed successful build.
+- Relay health endpoint responded with JSON and credentials enabled.
+
+### Blockers
+
+- None at deployment step.
+
+### Next step
+
+- Push latest commit and confirm GitHub Pages serves updated `config.js`.
+- Verify live market updates and fallback behavior from the public site.
+
