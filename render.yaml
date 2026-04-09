@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: stock-lab-realtime-relay
+    runtime: node
+    buildCommand: npm install
+    startCommand: npm run relay
+    autoDeploy: true
+    envVars:
+      - key: KIS_APP_KEY
+        sync: false
+      - key: KIS_APP_SECRET
+        sync: false
+      - key: PORT
+        value: "10000"

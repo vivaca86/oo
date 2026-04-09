@@ -1,6 +1,7 @@
 const MARKET_TIMEZONE = 'Asia/Seoul';
 const POLL_INTERVAL_MS = 5000;
 const STREAM_CONNECT_TIMEOUT_MS = 10000;
+const GATEWAY_REQUEST_SPACING_MS = 420;
 const SLOT_COUNT = 7;
 const STORAGE_GATEWAY = 'stock_eq_gateway_url';
 const STORAGE_LAST_DATE = 'stock_eq_last_date';
@@ -68,6 +69,9 @@ function formatDateLabel(dateStr) {
         day: 'numeric',
         weekday: 'short'
     }).format(parseKstDate(dateStr));
+}
+function waitMs(ms) {
+    return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 function getTodayKstDate() {
     const parts = new Intl.DateTimeFormat('en-CA', {
@@ -297,6 +301,17 @@ function buildComposedRows(series, liveSnapshot, session) {
             badgeClass: 'pending'
         }, ...historyRows].sort((left, right) => right.date.localeCompare(left.date));
     }
+    if (session === 'open' && (!liveSnapshot || !Number.isFinite(liveSnapshot.price))) {
+        return [{
+            date: series.selectedDate,
+            close: null,
+            prevClose: historyRows.at(-1)?.close ?? series.baselineClose ?? null,
+            equalRate: null,
+            kind: 'live',
+            badge: 'LIVE',
+            badgeClass: 'pending'
+        }, ...historyRows].sort((left, right) => right.date.localeCompare(left.date));
+    }
     if ((session === 'open' || session === 'closed') && liveSnapshot && Number.isFinite(liveSnapshot.price)) {
         const liveDate = liveSnapshot.date || series.selectedDate;
         const historyWithoutLiveDate = historyRows.filter((row) => row.date !== liveDate);
@@ -313,6 +328,19 @@ function buildComposedRows(series, liveSnapshot, session) {
         }, ...historyWithoutLiveDate].sort((left, right) => right.date.localeCompare(left.date));
     }
     return historyRows.sort((left, right) => right.date.localeCompare(left.date));
+}
+async function mapSequential(items, mapper, spacingMs = 0) {
+    const results = [];
+    for (let index = 0; index < items.length; index += 1) {
+        results.push(await mapper(items[index], index));
+        if (spacingMs > 0 && index < items.length - 1) {
+            await waitMs(spacingMs);
+        }
+    }
+    return results;
+}
+function shouldUseRealtimeStream() {
+    return Boolean(appState.realtimeUrl.trim()) && appState.selectedDate === getTodayKstDate();
 }
 function createRealtimeStreamClient(baseUrl) {
     const normalizedBaseUrl = String(baseUrl || '').trim();
@@ -692,22 +720,31 @@ function setSessionAndRebuildRows(nextSession) {
         rows: item.series ? buildComposedRows(item.series, item.liveSnapshot, appState.session) : []
     }));
 }
-function startRestPolling() {
+async function runRestPollingCycle() {
+    const pollAdapter = getActiveAdapter();
+    const polledState = await refreshLiveSnapshots(pollAdapter, appState.seriesCollection);
+    appState.seriesCollection = polledState.seriesCollection;
+    appState.session = polledState.session;
+    renderLiveState();
+    if (appState.session !== 'open') {
+        clearPolling();
+    }
+}
+function startRestPolling({ immediate = false } = {}) {
     if (appState.session !== 'open') return;
-    appState.pollingHandle = window.setInterval(async () => {
+    const runCycleSafely = async () => {
         try {
-            const pollAdapter = getActiveAdapter();
-            const polledState = await refreshLiveSnapshots(pollAdapter, appState.seriesCollection);
-            appState.seriesCollection = polledState.seriesCollection;
-            appState.session = polledState.session;
-            renderLiveState();
-            if (appState.session !== 'open') {
-                clearPolling();
-            }
+            await runRestPollingCycle();
         } catch (error) {
             console.error('polling failed', error);
             clearPolling();
         }
+    };
+    if (immediate) {
+        void runCycleSafely();
+    }
+    appState.pollingHandle = window.setInterval(async () => {
+        await runCycleSafely();
     }, POLL_INTERVAL_MS);
 }
 function startRealtimeStreamOrPolling() {
@@ -729,7 +766,7 @@ function startRealtimeStreamOrPolling() {
             appState.streamHandle.close();
             appState.streamHandle = null;
         }
-        startRestPolling();
+        startRestPolling({ immediate: true });
     };
     appState.streamHandle = realtimeClient.subscribe(targets, appState.selectedDate, {
         onSnapshot(payload) {
@@ -787,11 +824,13 @@ function renderSelectionNote(seriesCollection) {
     const unresolved = appState.slots.filter((slot) => slot.query && !slot.stock).map((slot) => `주식${slot.id}`);
     const actualEnd = getActualEndDate(seriesCollection);
     const dateNote = actualEnd && actualEnd !== appState.selectedDate
-        ? `선택일 ${appState.selectedDate}이 거래일이 아니거나 장중이어서 실제 월 계산은 ${actualEnd} 기준으로 맞췄습니다.`
+        ? `선택일 ${appState.selectedDate}이 거래일이 아니거나 장중이라 실제 월 계산은 ${actualEnd} 기준으로 맞췄습니다.`
         : `기준일 ${appState.selectedDate}이 속한 월의 거래일만 역순으로 보여줍니다.`;
     const realtimeNote = appState.dataMode === 'gateway'
         ? (appState.session === 'open'
-            ? '오늘 행은 웹소켓이 아니라 KIS REST를 5초 간격으로 다시 불러오는 준실시간 방식입니다.'
+            ? (shouldUseRealtimeStream()
+                ? '장중에는 KIS 웹소켓 relay로 오늘 행을 바로 반영하고, relay가 끊기면 REST fallback으로 전환합니다.'
+                : '장중에는 KIS REST를 5초 간격으로 다시 불러오는 fallback 방식입니다.')
             : '장 시작 전에는 오늘 행이 비고, 장이 열리면 오늘 등가률이 채워집니다.')
         : '현재는 데모 데이터입니다. 실데이터를 쓰려면 config.js에 게이트웨이 URL을 넣어 주세요.';
     const unresolvedNote = unresolved.length
@@ -871,19 +910,20 @@ function renderTable(matrixRows) {
 
 async function fetchSeriesCollection(adapter) {
     const targets = [KOSPI_BENCHMARK, ...appState.slots.map((slot) => slot.stock)];
-    const seriesCollection = await Promise.all(targets.map(async (target, index) => {
+    const seriesCollection = await mapSequential(targets, async (target, index) => {
         if (!target) {
             return { slotId: index, target: null, series: null, rows: [], liveSnapshot: null };
         }
         const series = await adapter.loadSeries(target, appState.selectedDate);
         return { slotId: index, target, series, rows: [], liveSnapshot: null };
-    }));
+    }, GATEWAY_REQUEST_SPACING_MS);
     const holidaySet = new Set(seriesCollection.flatMap((item) => item.series?.holidays || []));
     let session = resolveMarketSession(appState.selectedDate, holidaySet);
-    if (['open', 'preopen', 'closed'].includes(session)) {
-        const snapshots = await Promise.all(seriesCollection.map(async (item) => (
+    const shouldSkipInitialSnapshots = session === 'open' && shouldUseRealtimeStream();
+    if (['open', 'preopen', 'closed'].includes(session) && !shouldSkipInitialSnapshots) {
+        const snapshots = await mapSequential(seriesCollection, async (item) => (
             item.target ? adapter.loadIntraday(item.target, appState.selectedDate) : null
-        )));
+        ), GATEWAY_REQUEST_SPACING_MS);
         const firstSnapshotWithSession = snapshots.find((snapshot) => snapshot?.session);
         if (firstSnapshotWithSession?.session) {
             session = firstSnapshotWithSession.session;
@@ -906,9 +946,9 @@ async function refreshLiveSnapshots(adapter, existingSeriesCollection) {
     const holidaySet = new Set(seriesCollection.flatMap((item) => item.series?.holidays || []));
     let session = resolveMarketSession(appState.selectedDate, holidaySet);
     if (['open', 'preopen', 'closed'].includes(session)) {
-        const snapshots = await Promise.all(seriesCollection.map(async (item) => (
+        const snapshots = await mapSequential(seriesCollection, async (item) => (
             item.target ? adapter.loadIntraday(item.target, appState.selectedDate) : null
-        )));
+        ), GATEWAY_REQUEST_SPACING_MS);
         const firstSnapshotWithSession = snapshots.find((snapshot) => snapshot?.session);
         if (firstSnapshotWithSession?.session) {
             session = firstSnapshotWithSession.session;

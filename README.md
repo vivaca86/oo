@@ -37,6 +37,7 @@
 1. Apps Script 게이트웨이를 배포합니다.
 2. [config.js](/C:/Users/vivac/OneDrive/문서/aa/stock-lab/config.js)에 `gatewayUrl`을 넣습니다.
 3. 실시간까지 쓰려면 relay 서버를 배포하고 `realtimeUrl`도 넣습니다.
+4. Render를 쓸 경우 [render.yaml](/C:/Users/vivac/OneDrive/문서/aa/stock-lab/render.yaml)을 그대로 사용할 수 있습니다.
 
 예시:
 
