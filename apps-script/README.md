@@ -1,10 +1,11 @@
-﻿# Stock Equal-Rate Gateway
+# Stock Equal-Rate Gateway
 
 `stock-eq-gateway.gs` is an Apps Script web app backend for [index.html](/C:/Users/vivac/OneDrive/문서/aa/stock-lab/index.html).
 
-It exposes six GET actions:
+It exposes seven GET actions:
 
 - `action=health`
+- `action=stock-catalog&market=KOSPI`
 - `action=stock-search&q=삼성전자`
 - `action=equity-month&ticker=005930&date=2026-04-09`
 - `action=intraday-snapshot&ticker=005930&date=2026-04-09`
@@ -14,6 +15,7 @@ It exposes six GET actions:
 ## What It Does
 
 - Resolves stock names to codes using the official KIS master files.
+- Returns KOSPI catalog entries so the frontend can use a full datalist.
 - Loads monthly daily closes for both the selected stock and KOSPI.
 - Returns a `baselineClose` from the previous trading day before month start.
 - Returns only trading-day rows, so weekends and holidays do not appear in the table.
@@ -32,14 +34,31 @@ Set these in Apps Script under `Project Settings -> Script Properties`.
 
 ## Deploy
 
-1. Create a new Apps Script project.
-2. Paste the contents of [stock-eq-gateway.gs](/C:/Users/vivac/OneDrive/문서/aa/stock-lab/apps-script/stock-eq-gateway.gs) into the project.
-3. Save the script properties above.
-4. Deploy it as a Web App.
-5. Use `Execute as: Me`.
-6. Use `Who has access: Anyone` or a scope that matches where you will load the prototype.
-7. Copy the `/exec` URL.
-8. Put that URL into [config.js](/C:/Users/vivac/OneDrive/문서/aa/stock-lab/config.js).
+Files:
+
+- [appsscript.json](/C:/Users/vivac/OneDrive/문서/aa/stock-lab/apps-script/appsscript.json)
+- [.claspignore](/C:/Users/vivac/OneDrive/문서/aa/stock-lab/apps-script/.claspignore)
+- [deploy-gateway.ps1](/C:/Users/vivac/OneDrive/문서/aa/stock-lab/apps-script/tools/deploy-gateway.ps1)
+
+From the project root:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\deploy-backend.ps1 -Login
+```
+
+What it does:
+
+1. Logs into `clasp` if needed.
+2. Creates a standalone Apps Script project if `.clasp.json` does not exist yet.
+3. Pushes [stock-eq-gateway.gs](/C:/Users/vivac/OneDrive/문서/aa/stock-lab/apps-script/stock-eq-gateway.gs) and [appsscript.json](/C:/Users/vivac/OneDrive/문서/aa/stock-lab/apps-script/appsscript.json).
+4. Creates or updates a web-app deployment.
+5. Saves the deployment URL into [config.js](/C:/Users/vivac/OneDrive/문서/aa/stock-lab/config.js).
+
+Still manual once:
+
+- Open the Apps Script project.
+- Set `KIS_APP_KEY` and `KIS_APP_SECRET`.
+- Run the deploy command once more.
 
 ## Response Shape
 
