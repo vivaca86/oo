@@ -1,10 +1,12 @@
 const MARKET_TIMEZONE = 'Asia/Seoul';
 const POLL_INTERVAL_MS = 5000;
+const STREAM_CONNECT_TIMEOUT_MS = 10000;
 const SLOT_COUNT = 7;
 const STORAGE_GATEWAY = 'stock_eq_gateway_url';
 const STORAGE_LAST_DATE = 'stock_eq_last_date';
 const STORAGE_SLOTS = 'stock_eq_slots';
 const DEFAULT_GATEWAY = String(window.STOCK_LAB_CONFIG?.gatewayUrl || '');
+const DEFAULT_REALTIME_URL = String(window.STOCK_LAB_CONFIG?.realtimeUrl || '');
 const KOSPI_BENCHMARK = { code: '0001', name: 'KOSPI', market: 'INDEX', assetType: 'index', sector: '국내 대표 지수', area: '유가증권시장 전체 흐름' };
 const STOCK_CATALOG = [
     { code: '005930', name: '삼성전자', market: 'KOSPI', assetType: 'stock', sector: '반도체·전자', area: '메모리·System LSI·Foundry' },
@@ -35,12 +37,14 @@ const DEMO_FIXED_LIVE = {
 const appState = {
     selectedDate: '',
     gatewayUrl: '',
+    realtimeUrl: '',
     slots: [],
     catalog: [...STOCK_CATALOG],
     dataMode: 'demo',
     session: 'historical',
     seriesCollection: [],
     pollingHandle: null,
+    streamHandle: null,
     isLoading: false
 };
 
@@ -310,6 +314,80 @@ function buildComposedRows(series, liveSnapshot, session) {
     }
     return historyRows.sort((left, right) => right.date.localeCompare(left.date));
 }
+function createRealtimeStreamClient(baseUrl) {
+    const normalizedBaseUrl = String(baseUrl || '').trim();
+    if (!normalizedBaseUrl || typeof EventSource === 'undefined') return null;
+    return {
+        subscribe(targets, selectedDate, handlers = {}) {
+            const url = new URL(normalizedBaseUrl);
+            const codes = targets
+                .map((target) => String(target?.code || '').trim())
+                .filter(Boolean)
+                .filter((code, index, source) => source.indexOf(code) === index);
+            url.searchParams.set('codes', codes.join(','));
+            url.searchParams.set('date', selectedDate);
+            const source = new EventSource(url.toString());
+            let isClosed = false;
+            let isReady = false;
+            const timeoutHandle = window.setTimeout(() => {
+                if (isReady || isClosed) return;
+                try {
+                    source.close();
+                } catch (error) {
+                    console.warn('stream timeout close failed', error);
+                }
+                handlers.onError?.(new Error('실시간 스트림 연결 시간이 초과되었습니다.'));
+            }, STREAM_CONNECT_TIMEOUT_MS);
+            source.onopen = () => {
+                if (isClosed) return;
+                isReady = true;
+                window.clearTimeout(timeoutHandle);
+                handlers.onOpen?.();
+            };
+            source.onmessage = (event) => {
+                if (isClosed) return;
+                try {
+                    const payload = JSON.parse(event.data);
+                    if (payload?.type === 'snapshot') {
+                        handlers.onSnapshot?.(payload);
+                        return;
+                    }
+                    if (payload?.type === 'session') {
+                        handlers.onSession?.(payload);
+                        return;
+                    }
+                    if (payload?.type === 'error') {
+                        handlers.onError?.(new Error(payload.message || '실시간 스트림 오류가 발생했습니다.'));
+                    }
+                } catch (error) {
+                    console.error('stream parse failed', error);
+                }
+            };
+            source.onerror = () => {
+                if (isClosed) return;
+                window.clearTimeout(timeoutHandle);
+                try {
+                    source.close();
+                } catch (error) {
+                    console.warn('stream close failed', error);
+                }
+                handlers.onError?.(new Error('실시간 스트림 연결이 종료되었습니다.'));
+            };
+            return {
+                close() {
+                    if (isClosed) return;
+                    isClosed = true;
+                    window.clearTimeout(timeoutHandle);
+                    try {
+                        source.close();
+                    } catch (error) {
+                        console.warn('stream close failed', error);
+                    }
+                }
+            };
+        }
+    };
+}
 function createMockAdapter() {
     return {
         async searchStocks(query) {
@@ -426,6 +504,11 @@ function getActiveAdapter() {
     }
     appState.dataMode = 'gateway';
     return createGatewayAdapter(gatewayUrl);
+}
+function getRealtimeClient() {
+    const realtimeUrl = appState.realtimeUrl.trim();
+    if (!realtimeUrl) return null;
+    return createRealtimeStreamClient(realtimeUrl);
 }
 function findLocalStock(query) {
     const normalized = normalizeText(query);
@@ -560,6 +643,119 @@ function clearPolling() {
         window.clearInterval(appState.pollingHandle);
         appState.pollingHandle = null;
     }
+    if (appState.streamHandle) {
+        appState.streamHandle.close();
+        appState.streamHandle = null;
+    }
+}
+function renderLiveState() {
+    renderStatusStrips();
+    renderSelectionNote(appState.seriesCollection);
+    renderTable(buildMatrixRows(appState.seriesCollection, appState.session));
+}
+function applyRealtimeSnapshotUpdate(snapshotPayload) {
+    const code = String(snapshotPayload?.code || '').trim();
+    if (!code) return false;
+    let didUpdate = false;
+    appState.seriesCollection = appState.seriesCollection.map((item) => {
+        if (String(item?.target?.code || '').trim() !== code) {
+            return item;
+        }
+        didUpdate = true;
+        const nextSnapshot = {
+            ...(item.liveSnapshot || {}),
+            date: snapshotPayload.date || appState.selectedDate,
+            prevClose: Number.isFinite(Number(snapshotPayload.prevClose)) ? Number(snapshotPayload.prevClose) : (item.liveSnapshot?.prevClose ?? null),
+            price: Number.isFinite(Number(snapshotPayload.price)) ? Number(snapshotPayload.price) : (item.liveSnapshot?.price ?? null),
+            equalRate: Number.isFinite(Number(snapshotPayload.equalRate))
+                ? Number(snapshotPayload.equalRate)
+                : (Number.isFinite(Number(snapshotPayload.price)) && Number.isFinite(Number(snapshotPayload.prevClose)) && Number(snapshotPayload.prevClose) !== 0
+                    ? (Number(snapshotPayload.price) / Number(snapshotPayload.prevClose)) - 1
+                    : (item.liveSnapshot?.equalRate ?? null)),
+            asOf: snapshotPayload.asOf || item.liveSnapshot?.asOf || '',
+            session: snapshotPayload.session || item.liveSnapshot?.session || appState.session
+        };
+        return {
+            ...item,
+            liveSnapshot: nextSnapshot,
+            rows: item.series ? buildComposedRows(item.series, nextSnapshot, appState.session) : []
+        };
+    });
+    return didUpdate;
+}
+function setSessionAndRebuildRows(nextSession) {
+    if (nextSession) {
+        appState.session = nextSession;
+    }
+    appState.seriesCollection = appState.seriesCollection.map((item) => ({
+        ...item,
+        rows: item.series ? buildComposedRows(item.series, item.liveSnapshot, appState.session) : []
+    }));
+}
+function startRestPolling() {
+    if (appState.session !== 'open') return;
+    appState.pollingHandle = window.setInterval(async () => {
+        try {
+            const pollAdapter = getActiveAdapter();
+            const polledState = await refreshLiveSnapshots(pollAdapter, appState.seriesCollection);
+            appState.seriesCollection = polledState.seriesCollection;
+            appState.session = polledState.session;
+            renderLiveState();
+            if (appState.session !== 'open') {
+                clearPolling();
+            }
+        } catch (error) {
+            console.error('polling failed', error);
+            clearPolling();
+        }
+    }, POLL_INTERVAL_MS);
+}
+function startRealtimeStreamOrPolling() {
+    if (appState.session !== 'open') return;
+    const realtimeClient = getRealtimeClient();
+    const targets = appState.seriesCollection
+        .map((item) => item.target)
+        .filter(Boolean);
+    if (!realtimeClient || !targets.length || appState.selectedDate !== getTodayKstDate()) {
+        startRestPolling();
+        return;
+    }
+    let fallbackTriggered = false;
+    const triggerFallback = (error) => {
+        console.error('realtime stream failed', error);
+        if (fallbackTriggered) return;
+        fallbackTriggered = true;
+        if (appState.streamHandle) {
+            appState.streamHandle.close();
+            appState.streamHandle = null;
+        }
+        startRestPolling();
+    };
+    appState.streamHandle = realtimeClient.subscribe(targets, appState.selectedDate, {
+        onSnapshot(payload) {
+            if (payload?.session && payload.session !== appState.session) {
+                appState.session = payload.session;
+            }
+            const didUpdate = applyRealtimeSnapshotUpdate(payload);
+            if (!didUpdate) return;
+            setSessionAndRebuildRows(appState.session);
+            renderLiveState();
+            if (appState.session !== 'open') {
+                clearPolling();
+            }
+        },
+        onSession(payload) {
+            if (!payload?.session || payload.session === appState.session) return;
+            setSessionAndRebuildRows(payload.session);
+            renderLiveState();
+            if (appState.session !== 'open') {
+                clearPolling();
+            }
+        },
+        onError(error) {
+            triggerFallback(error);
+        }
+    });
 }
 function setLoading(isLoading) {
     appState.isLoading = isLoading;
@@ -742,30 +938,12 @@ async function loadAndRender() {
         const nextState = await fetchSeriesCollection(adapter);
         appState.seriesCollection = nextState.seriesCollection;
         appState.session = nextState.session;
-        renderStatusStrips();
-        renderSelectionNote(appState.seriesCollection);
         renderTableHead();
-        renderTable(buildMatrixRows(appState.seriesCollection, appState.session));
+        renderLiveState();
         const actualEnd = getActualEndDate(appState.seriesCollection) || appState.selectedDate;
         getEl('table-description').textContent = `${startOfMonth(actualEnd)}부터 ${actualEnd}까지 거래일만 역순으로 보여줍니다. 각 칸은 일별 등가률입니다.`;
         if (appState.session === 'open') {
-            appState.pollingHandle = window.setInterval(async () => {
-                try {
-                    const pollAdapter = getActiveAdapter();
-                    const polledState = await refreshLiveSnapshots(pollAdapter, appState.seriesCollection);
-                    appState.seriesCollection = polledState.seriesCollection;
-                    appState.session = polledState.session;
-                    renderStatusStrips();
-                    renderSelectionNote(appState.seriesCollection);
-                    renderTable(buildMatrixRows(appState.seriesCollection, appState.session));
-                    if (appState.session !== 'open') {
-                        clearPolling();
-                    }
-                } catch (error) {
-                    console.error('polling failed', error);
-                    clearPolling();
-                }
-            }, POLL_INTERVAL_MS);
+            startRealtimeStreamOrPolling();
         }
     } catch (error) {
         console.error(error);
@@ -842,6 +1020,7 @@ function restoreState() {
     const today = getTodayKstDate();
     appState.selectedDate = localStorage.getItem(STORAGE_LAST_DATE) || today;
     appState.gatewayUrl = localStorage.getItem(STORAGE_GATEWAY) || DEFAULT_GATEWAY;
+    appState.realtimeUrl = DEFAULT_REALTIME_URL;
     getEl('reference-date').value = appState.selectedDate;
     getEl('reference-date').max = today;
     const savedSlots = localStorage.getItem(STORAGE_SLOTS);

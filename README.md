@@ -1,31 +1,53 @@
 # Stock Lab
 
-이 폴더는 기존 `isarich`와 완전히 분리된 별도 주식 앱입니다.
+기존 `isarich`와 분리된 별도 주식 앱입니다.
 
-확인할 화면:
+핵심 파일:
 
-- [index.html](/C:/Users/vivac/OneDrive/문서/aa/stock-lab/index.html)
+- 화면: [index.html](/C:/Users/vivac/OneDrive/문서/aa/stock-lab/index.html)
+- 프론트 로직: [app.js](/C:/Users/vivac/OneDrive/문서/aa/stock-lab/app.js)
+- 스타일: [styles.css](/C:/Users/vivac/OneDrive/문서/aa/stock-lab/styles.css)
+- 프론트 설정: [config.js](/C:/Users/vivac/OneDrive/문서/aa/stock-lab/config.js)
+- Apps Script 게이트웨이: [stock-eq-gateway.gs](/C:/Users/vivac/OneDrive/문서/aa/stock-lab/apps-script/stock-eq-gateway.gs)
+- 실시간 relay: [server.mjs](/C:/Users/vivac/OneDrive/문서/aa/stock-lab/realtime-relay/server.mjs)
 
-정적 배포 저장소:
+저장소:
 
-- [vivaca86/oo](https://github.com/vivaca86/oo)
+- GitHub: [vivaca86/oo](https://github.com/vivaca86/oo)
+- GitHub Pages: [https://vivaca86.github.io/oo/](https://vivaca86.github.io/oo/)
 
-실데이터 연결 설정:
+## 데이터 구조
 
-- [config.js](/C:/Users/vivac/OneDrive/문서/aa/stock-lab/config.js)
+- 월간 히스토리, 종목 검색, 휴장일: Apps Script 게이트웨이
+- 장중 실시간: realtime relay가 KIS 웹소켓을 받아서 SSE로 전달
+- relay가 없으면 장중은 REST fallback
 
-Apps Script 게이트웨이:
+## 왜 relay가 필요한가
 
-- [stock-eq-gateway.gs](/C:/Users/vivac/OneDrive/문서/aa/stock-lab/apps-script/stock-eq-gateway.gs)
+한국투자 공식 실시간 웹소켓은 현재 `ws://ops.koreainvestment.com:21000` 기준입니다.  
+배포된 앱은 GitHub Pages의 `https://` 페이지라서 브라우저가 `ws://`에 직접 붙을 수 없습니다.  
+그래서 실시간은 별도 relay 서버가 필요합니다.
 
-게이트웨이 배포 도구:
+세부 설명:
 
-- [deploy-backend.ps1](/C:/Users/vivac/OneDrive/문서/aa/stock-lab/deploy-backend.ps1)
-- [README.md](/C:/Users/vivac/OneDrive/문서/aa/stock-lab/apps-script/README.md)
+- [realtime-relay/README.md](/C:/Users/vivac/OneDrive/문서/aa/stock-lab/realtime-relay/README.md)
 
-빠른 배포:
+## 빠른 실행
 
-1. Node.js를 설치합니다.
-2. 루트에서 `powershell -ExecutionPolicy Bypass -File .\deploy-backend.ps1 -Login` 를 실행합니다.
-3. Apps Script 프로젝트에 `KIS_APP_KEY`, `KIS_APP_SECRET` Script Properties를 넣습니다.
-4. 다시 `powershell -ExecutionPolicy Bypass -File .\deploy-backend.ps1` 를 실행합니다.
+1. Apps Script 게이트웨이를 배포합니다.
+2. [config.js](/C:/Users/vivac/OneDrive/문서/aa/stock-lab/config.js)에 `gatewayUrl`을 넣습니다.
+3. 실시간까지 쓰려면 relay 서버를 배포하고 `realtimeUrl`도 넣습니다.
+
+예시:
+
+```js
+window.STOCK_LAB_CONFIG = {
+    gatewayUrl: "https://script.google.com/macros/s/...",
+    realtimeUrl: "https://your-relay-domain/stream"
+};
+```
+
+## Apps Script 배포 도구
+
+- 루트 실행: [deploy-backend.ps1](/C:/Users/vivac/OneDrive/문서/aa/stock-lab/deploy-backend.ps1)
+- 게이트웨이 설명: [README.md](/C:/Users/vivac/OneDrive/문서/aa/stock-lab/apps-script/README.md)
