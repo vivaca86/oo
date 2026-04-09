@@ -5,11 +5,12 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$script:ClaspCommand = $null
 
 function Require-Command {
     param([string]$Name)
     if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) {
-        throw "필수 명령을 찾지 못했습니다: $Name"
+        throw "Missing required command: $Name"
     }
 }
 
@@ -21,11 +22,24 @@ function Invoke-Clasp {
 
     Push-Location $WorkingDirectory
     try {
-        $output = & npx --yes @google/clasp@latest @Arguments 2>&1
-        $exitCode = $LASTEXITCODE
+        if (-not $script:ClaspCommand) {
+            throw "clasp command path is not initialized."
+        }
+        $previousPreference = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            $output = & $script:ClaspCommand @Arguments 2>&1
+            $exitCode = $LASTEXITCODE
+        }
+        finally {
+            $ErrorActionPreference = $previousPreference
+        }
         $text = ($output | Out-String).Trim()
         if ($exitCode -ne 0) {
-            throw ($text ? $text : "clasp 명령이 실패했습니다.")
+            if ([string]::IsNullOrWhiteSpace($text)) {
+                throw "clasp command failed."
+            }
+            throw $text
         }
         return $text
     }
@@ -46,7 +60,7 @@ function Ensure-ClaspProject {
     $localClasp = Join-Path $ProjectDirectory ".clasprc.json"
 
     if ($ShouldLogin -or ((-not (Test-Path $homeClasp)) -and (-not (Test-Path $localClasp)))) {
-        Write-Host "clasp 로그인 진행"
+        Write-Host "Running clasp login"
         Invoke-Clasp -Arguments @("login", "--no-localhost") -WorkingDirectory $ProjectDirectory | Out-Null
     }
 
@@ -54,15 +68,15 @@ function Ensure-ClaspProject {
         return
     }
 
-    Write-Host "Apps Script 프로젝트 생성"
+    Write-Host "Creating standalone Apps Script project"
     $tempDir = Join-Path ([IO.Path]::GetTempPath()) ("stock-eq-clasp-" + [guid]::NewGuid().ToString("N"))
     New-Item -ItemType Directory -Path $tempDir | Out-Null
 
     try {
-        Invoke-Clasp -Arguments @("create-script", "--type", "standalone", "--title", $ProjectTitle) -WorkingDirectory $tempDir | Out-Null
+        Invoke-Clasp -Arguments @("create", "--type", "standalone", "--title", $ProjectTitle) -WorkingDirectory $tempDir | Out-Null
         $tempClasp = Join-Path $tempDir ".clasp.json"
         if (-not (Test-Path $tempClasp)) {
-            throw ".clasp.json 생성에 실패했습니다."
+            throw "Failed to create .clasp.json"
         }
         Copy-Item $tempClasp $claspFile -Force
     }
@@ -79,7 +93,7 @@ function Read-DeploymentState {
         return $null
     }
     try {
-        return Get-Content -Encoding UTF8 $Path | ConvertFrom-Json
+        return Get-Content -Raw -Encoding UTF8 $Path | ConvertFrom-Json
     }
     catch {
         return $null
@@ -88,13 +102,10 @@ function Read-DeploymentState {
 
 function Extract-DeploymentId {
     param([string]$Text)
-    if ($Text -match '(AKf[\w-]+)\s*@\s*\d+') {
-        return $Matches[1]
-    }
     if ($Text -match '(AKf[\w-]+)') {
         return $Matches[1]
     }
-    throw "배포 ID를 clasp 출력에서 찾지 못했습니다. 출력: $Text"
+    throw "Could not find deployment ID in clasp output: $Text"
 }
 
 function Update-ConfigGatewayUrl {
@@ -104,7 +115,7 @@ function Update-ConfigGatewayUrl {
     )
 
     if (-not (Test-Path $ConfigFilePath)) {
-        Write-Warning "config.js를 찾지 못해 gatewayUrl 갱신을 건너뜁니다: $ConfigFilePath"
+        Write-Warning "config.js not found: $ConfigFilePath"
         return
     }
 
@@ -117,28 +128,41 @@ function Update-ConfigGatewayUrl {
 
 Require-Command node
 Require-Command npm
-Require-Command npx
+
+$claspCmdCandidate = Join-Path $env:APPDATA "npm\\clasp.cmd"
+if (Test-Path $claspCmdCandidate) {
+    $script:ClaspCommand = $claspCmdCandidate
+}
+else {
+    Require-Command clasp
+    $script:ClaspCommand = "clasp"
+}
 
 $toolDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$projectDir = Resolve-Path (Join-Path $toolDir "..")
-$configFile = Resolve-Path (Join-Path $projectDir $ConfigPath) -ErrorAction SilentlyContinue
+$projectDir = (Resolve-Path (Join-Path $toolDir "..")).Path
+$configCandidate = Join-Path $projectDir $ConfigPath
+$configFile = if (Test-Path $configCandidate) { (Resolve-Path $configCandidate).Path } else { $null }
 $deploymentStatePath = Join-Path $projectDir ".deployment.json"
 
 Ensure-ClaspProject -ProjectDirectory $projectDir -ProjectTitle $Title -ShouldLogin:$Login
 
-Write-Host "Apps Script 코드 업로드"
-Invoke-Clasp -Arguments @("push", "--force") -WorkingDirectory $projectDir | Out-Null
+Write-Host "Pushing Apps Script files"
+Invoke-Clasp -Arguments @("push", "-f") -WorkingDirectory $projectDir | Out-Null
 
 $existingDeployment = Read-DeploymentState -Path $deploymentStatePath
 $description = "stock-eq-gateway web app"
-$deployArgs = @("create-deployment", "--description", $description)
+
 if ($existingDeployment -and $existingDeployment.deploymentId) {
-    $deployArgs += @("--deploymentId", [string]$existingDeployment.deploymentId)
+    Write-Host "Updating web app deployment"
+    $deployOutput = Invoke-Clasp -Arguments @("update-deployment", [string]$existingDeployment.deploymentId) -WorkingDirectory $projectDir
+    $deploymentId = [string]$existingDeployment.deploymentId
+}
+else {
+    Write-Host "Creating web app deployment"
+    $deployOutput = Invoke-Clasp -Arguments @("deploy", "--description", $description) -WorkingDirectory $projectDir
+    $deploymentId = Extract-DeploymentId -Text $deployOutput
 }
 
-Write-Host "웹앱 배포"
-$deployOutput = Invoke-Clasp -Arguments $deployArgs -WorkingDirectory $projectDir
-$deploymentId = Extract-DeploymentId -Text $deployOutput
 $execUrl = "https://script.google.com/macros/s/$deploymentId/exec"
 
 @{
@@ -152,11 +176,11 @@ if ($configFile) {
 }
 
 Write-Host ""
-Write-Host "배포 완료"
+Write-Host "Deploy complete"
 Write-Host "deploymentId: $deploymentId"
 Write-Host "execUrl     : $execUrl"
 Write-Host ""
-Write-Host "다음 확인"
-Write-Host "1. Apps Script 프로젝트의 Script Properties에 KIS_APP_KEY, KIS_APP_SECRET 설정"
-Write-Host "2. 필요하면 웹앱 권한을 Anyone로 다시 확인"
-Write-Host "3. 프론트에서 config.js의 gatewayUrl 반영 여부 확인"
+Write-Host "Next steps"
+Write-Host "1. Set KIS_APP_KEY and KIS_APP_SECRET in Script Properties"
+Write-Host "2. Confirm the web app access scope if needed"
+Write-Host "3. Check config.js gatewayUrl"
