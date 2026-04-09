@@ -1,6 +1,6 @@
 # Codex Context
 
-Last updated: 2026-04-09 (Asia/Seoul)
+Last updated: 2026-04-10 (Asia/Seoul)
 
 ## Project
 
@@ -57,8 +57,8 @@ Build a stock equal-rate web app that behaves like the user's Google Sheet model
 - Frontend is deployed on GitHub Pages.
 - Apps Script REST gateway is deployed and reachable.
 - `config.js` has the gateway URL set.
-- `config.js` still has `realtimeUrl: ""`.
-- The realtime relay code exists but is not yet deployed to a public host.
+- `config.js` now sets `realtimeUrl` to `https://oo-l347.onrender.com/stream`.
+- Realtime relay is deployed on Render: `https://oo-l347.onrender.com`.
 - Frontend logic already supports:
   - realtime relay via SSE when `realtimeUrl` exists
   - REST fallback if the relay is absent or fails
@@ -104,24 +104,23 @@ On 2026-04-09:
 - local relay `/health` returned `200`
 - local relay health showed `hasCredentials: false` locally, which is expected without local env vars
 
+On 2026-04-10 (Render production):
+
+- Render relay deploy completed at `https://oo-l347.onrender.com`
+- `/health` response confirmed `ok: true` and `hasCredentials: true`
+
 ## Exact Next Actions
 
 The next agent should continue with these steps in order:
 
-1. Deploy the realtime relay to a free host.
-   - Preferred path: Render free tier
-   - Use `render.yaml`
-   - Set environment variables:
-     - `KIS_APP_KEY`
-     - `KIS_APP_SECRET`
-2. After Render returns a public URL, update [config.js](/C:/Users/vivac/OneDrive/문서/aa/stock-lab/config.js):
-   - set `realtimeUrl` to `https://<render-domain>/stream`
-3. Push that config change to GitHub
-4. Verify the public site:
+1. Verify GitHub Pages uses the latest `config.js` with relay URL:
+   - `realtimeUrl: https://oo-l347.onrender.com/stream`
+2. Verify the public site behavior during market hours:
    - site loads
-   - today's row updates from relay during market open
-   - if relay fails, REST fallback still works
-5. Update this file and append the result to `SESSION_LOG.md`
+   - today row updates from relay
+   - relay failure triggers REST fallback
+3. Monitor Render free instance cold-start behavior and decide if paid upgrade is needed
+4. Keep `CODEX_CONTEXT.md` and `SESSION_LOG.md` updated after each verification session
 
 ## If Continuing In Web Codex
 
