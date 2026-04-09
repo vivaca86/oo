@@ -701,6 +701,31 @@ async function fetchSeriesCollection(adapter) {
     });
     return { seriesCollection, session };
 }
+async function refreshLiveSnapshots(adapter, existingSeriesCollection) {
+    const seriesCollection = existingSeriesCollection.map((item) => ({
+        ...item,
+        rows: Array.isArray(item.rows) ? item.rows : [],
+        liveSnapshot: item.liveSnapshot || null
+    }));
+    const holidaySet = new Set(seriesCollection.flatMap((item) => item.series?.holidays || []));
+    let session = resolveMarketSession(appState.selectedDate, holidaySet);
+    if (['open', 'preopen', 'closed'].includes(session)) {
+        const snapshots = await Promise.all(seriesCollection.map(async (item) => (
+            item.target ? adapter.loadIntraday(item.target, appState.selectedDate) : null
+        )));
+        const firstSnapshotWithSession = snapshots.find((snapshot) => snapshot?.session);
+        if (firstSnapshotWithSession?.session) {
+            session = firstSnapshotWithSession.session;
+        }
+        snapshots.forEach((snapshot, index) => {
+            seriesCollection[index].liveSnapshot = snapshot;
+        });
+    }
+    seriesCollection.forEach((item) => {
+        item.rows = item.series ? buildComposedRows(item.series, item.liveSnapshot, session) : [];
+    });
+    return { seriesCollection, session };
+}
 async function loadAndRender() {
     clearPolling();
     if (!appState.selectedDate) {
@@ -727,7 +752,7 @@ async function loadAndRender() {
             appState.pollingHandle = window.setInterval(async () => {
                 try {
                     const pollAdapter = getActiveAdapter();
-                    const polledState = await fetchSeriesCollection(pollAdapter);
+                    const polledState = await refreshLiveSnapshots(pollAdapter, appState.seriesCollection);
                     appState.seriesCollection = polledState.seriesCollection;
                     appState.session = polledState.session;
                     renderStatusStrips();
