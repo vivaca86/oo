@@ -88,3 +88,24 @@
 - Push latest commit and confirm GitHub Pages serves updated `config.js`.
 - Verify live market updates and fallback behavior from the public site.
 
+### Slot control and monthly header summary refinement
+
+- User feedback: fixed-slot UX felt limiting and slot header needed clearer monthly aggregate meaning.
+- Added slot-count selector in UI (`3~7`) so visible stock columns can be adjusted without code changes.
+- Kept default visible slots at 3, but expanded runtime support to 7 with state persistence.
+- Updated slot secondary text to show monthly equal-rate aggregate range and value (e.g., `4/1~4/10`).
+
+### Verification
+
+- `node --check app.js` passed after slot-count/state updates.
+- `node --check realtime-relay/server.mjs` passed (no regressions in relay path changes).
+
+### Next step
+
+- Confirm GitHub Pages reflects slot selector and monthly aggregate labels in production UI.
+
+### Gateway rate-limit handling hardening
+
+- User reported intermittent `초당 거래건수를 초과하였습니다.` even with a small slot count.
+- Added gateway client-side pacing and rate-limit-aware retries with backoff in frontend adapter logic.
+- Goal: reduce transient load failures by spacing calls more conservatively and retrying automatically on rate-limit responses.

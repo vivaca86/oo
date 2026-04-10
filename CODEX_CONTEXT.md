@@ -59,6 +59,7 @@ Build a stock equal-rate web app that behaves like the user's Google Sheet model
 - `config.js` has the gateway URL set.
 - `config.js` now sets `realtimeUrl` to `https://oo-l347.onrender.com/stream`.
 - Realtime relay is deployed on Render: `https://oo-l347.onrender.com`.
+- Stock slot UI now starts at 3 slots but supports user-adjustable range 3~7 from the page control.
 - Frontend logic already supports:
   - realtime relay via SSE when `realtimeUrl` exists
   - REST fallback if the relay is absent or fails
@@ -88,6 +89,8 @@ This explains why initial burst loads were failing even after earlier polling re
 3. Initial burst throttling:
    - Gateway requests are now spaced sequentially instead of firing all targets at once.
    - During open sessions, if `realtimeUrl` exists, the app skips the initial intraday REST snapshot burst and waits for the realtime stream.
+4. Gateway client retry pacing:
+   - Frontend gateway calls now apply per-request pacing and retry with backoff when rate-limit messages are returned.
 
 ## Recent Commits
 

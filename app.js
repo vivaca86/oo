@@ -2,10 +2,15 @@ const MARKET_TIMEZONE = 'Asia/Seoul';
 const POLL_INTERVAL_MS = 5000;
 const STREAM_CONNECT_TIMEOUT_MS = 10000;
 const GATEWAY_REQUEST_SPACING_MS = 420;
-const SLOT_COUNT = 3;
+const GATEWAY_MIN_INTERVAL_MS = 700;
+const GATEWAY_RETRY_DELAYS_MS = [900, 1600, 2400];
+const MIN_SLOT_COUNT = 3;
+const MAX_SLOT_COUNT = 7;
+const DEFAULT_SLOT_COUNT = 3;
 const STORAGE_GATEWAY = 'stock_eq_gateway_url';
 const STORAGE_LAST_DATE = 'stock_eq_last_date';
 const STORAGE_SLOTS = 'stock_eq_slots';
+const STORAGE_SLOT_COUNT = 'stock_eq_slot_count';
 const DEFAULT_GATEWAY = String(window.STOCK_LAB_CONFIG?.gatewayUrl || '');
 const DEFAULT_REALTIME_URL = String(window.STOCK_LAB_CONFIG?.realtimeUrl || '');
 const KOSPI_BENCHMARK = { code: '0001', name: 'KOSPI', market: 'INDEX', assetType: 'index', sector: '국내 대표 지수', area: '유가증권시장 전체 흐름' };
@@ -39,6 +44,7 @@ const appState = {
     selectedDate: '',
     gatewayUrl: '',
     realtimeUrl: '',
+    slotCount: DEFAULT_SLOT_COUNT,
     slots: [],
     catalog: [...STOCK_CATALOG],
     dataMode: 'demo',
@@ -72,6 +78,11 @@ function formatDateLabel(dateStr) {
 }
 function waitMs(ms) {
     return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+function isGatewayRateLimitErrorMessage(message) {
+    const normalized = String(message || '').toLowerCase();
+    if (!normalized) return false;
+    return normalized.includes('초당 거래건수') || normalized.includes('rate limit') || normalized.includes('too many');
 }
 function getTodayKstDate() {
     const parts = new Intl.DateTimeFormat('en-CA', {
@@ -160,7 +171,31 @@ function escapeHtml(value) {
         .replace(/'/g, '&#39;');
 }
 function createDefaultSlots() {
-    return Array.from({ length: SLOT_COUNT }, (_, index) => {
+    return Array.from({ length: appState.slotCount }, (_, index) => {
+        const defaultCode = DEFAULT_SLOT_CODES[index] || '';
+        const defaultStock = STOCK_CATALOG.find((item) => item.code === defaultCode) || null;
+        return {
+            id: index + 1,
+            query: defaultStock ? defaultStock.name : '',
+            stock: defaultStock
+        };
+    });
+}
+function normalizeSlotCount(rawCount) {
+    const parsed = Number(rawCount);
+    if (!Number.isFinite(parsed)) return DEFAULT_SLOT_COUNT;
+    return Math.max(MIN_SLOT_COUNT, Math.min(MAX_SLOT_COUNT, Math.trunc(parsed)));
+}
+function buildSlotsForCount(nextCount, previousSlots = []) {
+    return Array.from({ length: nextCount }, (_, index) => {
+        const existing = previousSlots[index];
+        if (existing) {
+            return {
+                id: index + 1,
+                query: String(existing.query || ''),
+                stock: existing.stock ? enrichStockMeta(existing.stock) : null
+            };
+        }
         const defaultCode = DEFAULT_SLOT_CODES[index] || '';
         const defaultStock = STOCK_CATALOG.find((item) => item.code === defaultCode) || null;
         return {
@@ -482,6 +517,15 @@ function createMockAdapter() {
 }
 function createGatewayAdapter(baseUrl) {
     if (!baseUrl) return null;
+    let lastRequestAt = 0;
+    async function waitForGatewayTurn() {
+        const elapsed = Date.now() - lastRequestAt;
+        const waitNeeded = Math.max(0, GATEWAY_MIN_INTERVAL_MS - elapsed);
+        if (waitNeeded > 0) {
+            await waitMs(waitNeeded);
+        }
+        lastRequestAt = Date.now();
+    }
     async function request(action, params = {}) {
         const url = new URL(baseUrl);
         url.searchParams.set('action', action);
@@ -490,11 +534,34 @@ function createGatewayAdapter(baseUrl) {
                 url.searchParams.set(key, value);
             }
         });
-        const response = await fetch(url.toString(), { headers: { Accept: 'application/json' } });
-        if (!response.ok) throw new Error(`Gateway HTTP ${response.status}`);
-        const payload = await response.json();
-        if (payload && payload.ok === false) throw new Error(payload?.error?.message || 'Gateway error');
-        return payload;
+        let attempt = 0;
+        while (true) {
+            try {
+                await waitForGatewayTurn();
+                const response = await fetch(url.toString(), { headers: { Accept: 'application/json' } });
+                const rawText = await response.text();
+                let payload = null;
+                try {
+                    payload = rawText ? JSON.parse(rawText) : null;
+                } catch (_) {
+                    payload = null;
+                }
+                if (!response.ok) {
+                    throw new Error(payload?.error?.message || payload?.message || `Gateway HTTP ${response.status}`);
+                }
+                if (payload && payload.ok === false) {
+                    throw new Error(payload?.error?.message || payload?.message || 'Gateway error');
+                }
+                return payload;
+            } catch (error) {
+                if (!isGatewayRateLimitErrorMessage(error?.message) || attempt >= GATEWAY_RETRY_DELAYS_MS.length) {
+                    throw error;
+                }
+                const retryDelay = GATEWAY_RETRY_DELAYS_MS[attempt];
+                attempt += 1;
+                await waitMs(retryDelay);
+            }
+        }
     }
     return {
         async loadCatalog(market = 'KOSPI') {
@@ -660,6 +727,19 @@ function persistSlots() {
         query: slot.query,
         stock: slot.stock
     }))));
+}
+function persistSlotCount() {
+    localStorage.setItem(STORAGE_SLOT_COUNT, String(appState.slotCount));
+}
+function syncSlotCountInput() {
+    const slotCountEl = getEl('slot-count');
+    if (!slotCountEl) return;
+    slotCountEl.value = String(appState.slotCount);
+}
+function updateEmptyStateCopy() {
+    const emptyEl = getEl('empty-state');
+    if (!emptyEl) return;
+    emptyEl.textContent = `기준일과 종목을 불러오면 여기에 날짜 / KOSPI / 주식1~주식${appState.slotCount} 등가률 표가 표시됩니다.`;
 }
 function readSlotInputsIntoState() {
     appState.slots = appState.slots.map((slot) => {
@@ -906,6 +986,7 @@ function renderTableHead() {
             ${slotInputs}
         </tr>
     `;
+    updateEmptyStateCopy();
 }
 function renderTable(matrixRows) {
     const body = getEl('table-body');
@@ -1057,6 +1138,17 @@ function bindEvents() {
         persistSlots();
         await loadAndRender();
     });
+    getEl('slot-count').addEventListener('change', async (event) => {
+        const nextCount = normalizeSlotCount(event.target.value);
+        if (nextCount === appState.slotCount) return;
+        appState.slotCount = nextCount;
+        appState.slots = buildSlotsForCount(nextCount, appState.slots);
+        persistSlotCount();
+        persistSlots();
+        syncSlotCountInput();
+        renderTableHead();
+        await loadAndRender();
+    });
     getEl('reference-date').addEventListener('change', async (event) => {
         appState.selectedDate = event.target.value;
         localStorage.setItem(STORAGE_LAST_DATE, appState.selectedDate);
@@ -1081,6 +1173,7 @@ function restoreState() {
     appState.selectedDate = localStorage.getItem(STORAGE_LAST_DATE) || today;
     appState.gatewayUrl = localStorage.getItem(STORAGE_GATEWAY) || DEFAULT_GATEWAY;
     appState.realtimeUrl = DEFAULT_REALTIME_URL;
+    appState.slotCount = normalizeSlotCount(localStorage.getItem(STORAGE_SLOT_COUNT) || DEFAULT_SLOT_COUNT);
     getEl('reference-date').value = appState.selectedDate;
     getEl('reference-date').max = today;
     const savedSlots = localStorage.getItem(STORAGE_SLOTS);
@@ -1088,14 +1181,7 @@ function restoreState() {
         try {
             const parsed = JSON.parse(savedSlots);
             if (Array.isArray(parsed) && parsed.length) {
-                appState.slots = Array.from({ length: SLOT_COUNT }, (_, index) => {
-                    const raw = parsed[index] || {};
-                    return {
-                        id: index + 1,
-                        query: String(raw.query || ''),
-                        stock: raw.stock ? enrichStockMeta(raw.stock) : null
-                    };
-                });
+                appState.slots = buildSlotsForCount(appState.slotCount, parsed);
             }
         } catch (error) {
             console.warn('failed to restore slots', error);
@@ -1107,6 +1193,7 @@ function restoreState() {
 }
 async function init() {
     restoreState();
+    syncSlotCountInput();
     await ensureCatalogLoaded();
     renderStatusStrips();
     renderSelectionNote([]);
