@@ -60,6 +60,7 @@ Build a stock equal-rate web app that behaves like the user's Google Sheet model
 - `config.js` now sets `realtimeUrl` to `https://oo-l347.onrender.com/stream`.
 - Realtime relay is deployed on Render: `https://oo-l347.onrender.com`.
 - Stock slot UI now starts at 1 slot but supports user-adjustable range 1~7 from the page control.
+- Month-series UI is currently narrowed to the most recent 5 trading days (easy to restore by changing the configured window constants).
 - Frontend logic already supports:
   - realtime relay via SSE when `realtimeUrl` exists
   - REST fallback if the relay is absent or fails
@@ -91,6 +92,8 @@ This explains why initial burst loads were failing even after earlier polling re
    - During open sessions, if `realtimeUrl` exists, the app skips the initial intraday REST snapshot burst and waits for the realtime stream.
 4. Gateway client retry pacing:
    - Frontend gateway calls now apply per-request pacing and retry with backoff when rate-limit messages are returned.
+5. Gateway month action call reduction:
+   - Apps Script monthly handlers now reuse the current-month holiday set when determining series end date, removing an extra previous-month holiday API fetch per request.
 
 ## Recent Commits
 
