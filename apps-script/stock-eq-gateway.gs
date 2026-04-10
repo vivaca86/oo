@@ -89,12 +89,36 @@ function handleStockCatalog_(params) {
 }
 
 function handleHealth_() {
+  var dataSource = String(getSetting_('DATA_SOURCE', 'KIS')).trim().toUpperCase() || 'KIS';
+  var sheetInfo = getSheetDebugInfo_(dataSource);
   return {
     ok: true,
     service: 'stock-eq-gateway',
     now: formatKstTimestamp_(new Date()),
-    hasCredentials: Boolean(getSetting_('KIS_APP_KEY', '') && getSetting_('KIS_APP_SECRET', ''))
+    hasCredentials: Boolean(getSetting_('KIS_APP_KEY', '') && getSetting_('KIS_APP_SECRET', '')),
+    dataSource: dataSource,
+    sheet: sheetInfo
   };
+}
+
+function getSheetDebugInfo_(dataSource) {
+  var spreadsheetId = String(getSetting_('SHEET_SPREADSHEET_ID', '')).trim();
+  var sheetName = String(getSetting_('SHEET_NAME', '')).trim();
+  var info = {
+    spreadsheetId: spreadsheetId || null,
+    configuredSheetName: sheetName || null
+  };
+  if (dataSource !== 'SHEET' || !spreadsheetId) {
+    return info;
+  }
+  try {
+    var sheet = getConfiguredSheet_();
+    info.resolvedSheetName = String(sheet.getName() || '');
+    info.resolvedSheetId = sheet.getSheetId();
+  } catch (error) {
+    info.error = String(error && error.message ? error.message : error);
+  }
+  return info;
 }
 
 function handleStockSearch_(params) {

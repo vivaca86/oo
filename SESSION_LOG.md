@@ -144,6 +144,7 @@
   - `SHEET_NAME` (optional, defaults to first sheet)
 - In SHEET mode, month handlers now read date + target column equal-rate values from sheet and build response rows without KIS calls.
 - Added `sheet-sync-targets` action so frontend-selected stock tickers can be written to `B2/C2~I2` flow before reading sheet-driven equal rates.
+- Added health debug payload (`dataSource`, configured/resolved sheet info) so users can verify which spreadsheet/sheet is actually connected.
 
 ### Apps Script redeploy URL update
 
@@ -151,3 +152,7 @@
 - Updated frontend `config.js` `gatewayUrl` to the new `/exec` URL.
 - Updated `CODEX_CONTEXT.md` public exec URL reference to match the redeploy.
 
+### Apps Script redeploy URL update (second)
+
+- User confirmed a newer Apps Script deploy URL and requested switching frontend gateway to that URL.
+- Updated `config.js` and `CODEX_CONTEXT.md` to the new `/exec` endpoint.

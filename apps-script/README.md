@@ -13,6 +13,8 @@ It exposes eight GET actions:
 - `action=index-snapshot&indexCode=0001&date=2026-04-09`
 - `action=sheet-sync-targets&tickers=005930,000660,...` (SHEET 모드에서 B2/C2~I2 티커 동기화)
 
+`action=health` 응답에는 `dataSource` 및 `sheet`(연결된 스프레드시트 ID/시트명 디버그 정보)가 포함됩니다.
+
 ## What It Does
 
 - Resolves stock names to codes using the official KIS master files.
