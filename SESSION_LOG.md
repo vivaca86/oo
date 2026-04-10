@@ -159,3 +159,9 @@
 
 - User confirmed a newer Apps Script deploy URL and requested switching frontend gateway to that URL.
 - Updated `config.js` and `CODEX_CONTEXT.md` to the new `/exec` endpoint.
+
+### Apps Script redeploy URL update (third)
+
+- User provided another newly deployed Apps Script web-app URL.
+- Updated frontend `config.js` gateway URL and context URL reference to this latest endpoint.
+

@@ -39,7 +39,7 @@ Build a stock equal-rate web app that behaves like the user's Google Sheet model
 - Apps Script project:
   [project editor](https://script.google.com/home/projects/13aWS-lCZTa2Rii1DMy9y1DKZVsJ2pR6PabbM-9vj0puK4HCoQXT5j4Gd/edit)
 - Public exec URL:
-  `https://script.google.com/macros/s/AKfycbwY8HeytMMA6kmlihyrwLYBPKt4g-4Sb9btRSLcz3FQhSl2WFdZjfgCr2UCJ3NIgrg0iw/exec`
+  `https://script.google.com/macros/s/AKfycbz7D26qQrv70b-BWxYXaQ8g5VKz2oRej4c-ueVxw5lXzLEHVtQMlQUgzAEeKa1el2OvuQ/exec`
 - Health was confirmed with `hasCredentials: true` on 2026-04-09 after the user added `KIS_APP_KEY` and `KIS_APP_SECRET`.
 
 ### Realtime relay
