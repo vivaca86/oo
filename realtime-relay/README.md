@@ -36,6 +36,7 @@ npm run relay
 
 정상 실행 후 확인:
 
+- `GET /` (health와 동일 응답)
 - `GET /health`
 - `GET /stream?codes=0001,005930,000660&date=2026-04-09`
 
