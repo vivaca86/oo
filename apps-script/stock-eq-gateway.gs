@@ -7,6 +7,9 @@
   catalogCacheHours: 24,
   holidayCacheHours: 24,
   cacheChunkSize: 8000,
+  tradingDayWindow: 5,
+  kisMinIntervalMs: 450,
+  kisRetryDelaysMs: [900, 1600],
   recentHistoryLookbackDays: 10,
   propertyPrefix: 'stock_eq_gateway_v1',
   masterSources: [
@@ -114,10 +117,10 @@ function handleEquityMonth_(params) {
   var selectedDate = coerceIsoDate_(params.date);
   var monthStart = startOfMonthIso_(selectedDate);
   var holidays = getMonthlyHolidayDates_(selectedDate);
-  var boundaryHolidays = getBoundaryHolidayDates_(selectedDate);
-  var historyEndDate = resolveSeriesEndDate_(selectedDate, boundaryHolidays);
+  var historyEndDate = resolveSeriesEndDate_(selectedDate, holidays);
   var rows = fetchDailyCloseRows_(stock.code, addDaysIso_(monthStart, -40), historyEndDate);
   var partition = partitionMonthRows_(rows, monthStart);
+  var limited = limitRecentTradingRowsWithBaseline_(partition.rows, partition.baselineDate, partition.baselineClose, STOCK_EQ_GATEWAY.tradingDayWindow);
   var lastTradingDate = inferLastTradingDate_(historyEndDate, monthStart, partition.rows, holidays);
 
   return {
@@ -125,9 +128,9 @@ function handleEquityMonth_(params) {
     stock: stock,
     selectedDate: selectedDate,
     lastTradingDate: lastTradingDate,
-    baselineDate: partition.baselineDate,
-    baselineClose: partition.baselineClose,
-    rows: partition.rows,
+    baselineDate: limited.baselineDate,
+    baselineClose: limited.baselineClose,
+    rows: limited.rows,
     holidays: holidays,
     source: 'kis-open-api'
   };
@@ -138,10 +141,10 @@ function handleIndexMonth_(params) {
   var selectedDate = coerceIsoDate_(params.date);
   var monthStart = startOfMonthIso_(selectedDate);
   var holidays = getMonthlyHolidayDates_(selectedDate);
-  var boundaryHolidays = getBoundaryHolidayDates_(selectedDate);
-  var historyEndDate = resolveSeriesEndDate_(selectedDate, boundaryHolidays);
+  var historyEndDate = resolveSeriesEndDate_(selectedDate, holidays);
   var rows = fetchIndexDailyRows_(stock.code, historyEndDate);
   var partition = partitionMonthRows_(rows, monthStart);
+  var limited = limitRecentTradingRowsWithBaseline_(partition.rows, partition.baselineDate, partition.baselineClose, STOCK_EQ_GATEWAY.tradingDayWindow);
   var lastTradingDate = inferLastTradingDate_(historyEndDate, monthStart, partition.rows, holidays);
 
   return {
@@ -149,9 +152,9 @@ function handleIndexMonth_(params) {
     stock: stock,
     selectedDate: selectedDate,
     lastTradingDate: lastTradingDate,
-    baselineDate: partition.baselineDate,
-    baselineClose: partition.baselineClose,
-    rows: partition.rows,
+    baselineDate: limited.baselineDate,
+    baselineClose: limited.baselineClose,
+    rows: limited.rows,
     holidays: holidays,
     source: 'kis-open-api'
   };
@@ -694,16 +697,39 @@ function callKisGetWithHeaders_(path, trId, params, extraHeaders) {
 
   assignOwnProperties_(headers, extraHeaders || {});
   var url = buildUrl_(getSetting_('KIS_BASE_URL', STOCK_EQ_GATEWAY.defaultBaseUrl) + path, params);
-  var response = UrlFetchApp.fetch(url, {
-    method: 'get',
-    headers: headers,
-    muteHttpExceptions: true,
-    followRedirects: true
-  });
+  var response = null;
+  var statusCode = 0;
+  var text = '';
+  var json = null;
 
-  var statusCode = response.getResponseCode();
-  var text = response.getContentText();
-  var json = safeJsonParse_(text);
+  for (var attempt = 0; attempt <= STOCK_EQ_GATEWAY.kisRetryDelaysMs.length; attempt += 1) {
+    waitForKisRequestSlot_();
+    response = UrlFetchApp.fetch(url, {
+      method: 'get',
+      headers: headers,
+      muteHttpExceptions: true,
+      followRedirects: true
+    });
+
+    statusCode = response.getResponseCode();
+    text = response.getContentText();
+    json = safeJsonParse_(text);
+
+    var hasError = statusCode >= 400 || (json && json.rt_cd && String(json.rt_cd) !== '0');
+    if (!hasError) {
+      break;
+    }
+
+    if (!isKisRateLimitResponse_(statusCode, json, text) || attempt >= STOCK_EQ_GATEWAY.kisRetryDelaysMs.length) {
+      if (statusCode >= 400) {
+        throw createHttpError_(statusCode, extractKisErrorMessage_(json, text));
+      }
+      throw createHttpError_(502, extractKisErrorMessage_(json, text));
+    }
+
+    Utilities.sleep(Number(STOCK_EQ_GATEWAY.kisRetryDelaysMs[attempt] || 900));
+  }
+
   if (statusCode >= 400) {
     throw createHttpError_(statusCode, extractKisErrorMessage_(json, text));
   }
@@ -717,6 +743,33 @@ function callKisGetWithHeaders_(path, trId, params, extraHeaders) {
     statusCode: statusCode,
     text: text
   };
+}
+
+function waitForKisRequestSlot_() {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var key = cacheKey_('kis_last_request_ms');
+    var lastTs = Number(props.getProperty(key) || 0);
+    var now = Date.now();
+    var waitMs = Math.max(0, Number(STOCK_EQ_GATEWAY.kisMinIntervalMs || 0) - (now - lastTs));
+    if (waitMs > 0) {
+      Utilities.sleep(waitMs);
+    }
+    props.setProperty(key, String(Date.now()));
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function isKisRateLimitResponse_(statusCode, json, text) {
+  var message = String(extractKisErrorMessage_(json, text) || '').toLowerCase();
+  if (message.indexOf('초당 거래건수') >= 0) return true;
+  if (message.indexOf('rate limit') >= 0) return true;
+  if (message.indexOf('too many') >= 0) return true;
+  if (message.indexOf('egw00123') >= 0) return true;
+  return statusCode === 429;
 }
 
 function getAccessToken_() {
@@ -891,6 +944,27 @@ function partitionMonthRows_(rows, monthStart) {
     baselineDate: baseline ? baseline.date : null,
     baselineClose: baseline ? baseline.close : null,
     rows: monthRows
+  };
+}
+
+function limitRecentTradingRowsWithBaseline_(rows, baselineDate, baselineClose, windowSize) {
+  var maxRows = Math.max(1, Number(windowSize || 0) || STOCK_EQ_GATEWAY.tradingDayWindow);
+  if (!rows || rows.length <= maxRows) {
+    return {
+      baselineDate: baselineDate || null,
+      baselineClose: baselineClose || null,
+      rows: rows || []
+    };
+  }
+
+  var startIndex = rows.length - maxRows;
+  var limitedRows = rows.slice(startIndex);
+  var previousRow = rows[startIndex - 1] || null;
+
+  return {
+    baselineDate: previousRow ? previousRow.date : (baselineDate || null),
+    baselineClose: previousRow ? previousRow.close : (baselineClose || null),
+    rows: limitedRows
   };
 }
 
@@ -1146,4 +1220,3 @@ function clearCachedValue_(suffix, chunkCount) {
     props.deleteProperty(cacheChunkKey_(suffix, i));
   }
 }
-
