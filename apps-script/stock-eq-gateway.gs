@@ -1,4 +1,6 @@
 ﻿var STOCK_EQ_GATEWAY = {
+  gatewayVersion: '2026-04-10.1',
+  healthSchemaVersion: 2,
   timezone: 'Asia/Seoul',
   defaultBaseUrl: 'https://openapi.koreainvestment.com:9443',
   defaultMarketDiv: 'J',
@@ -7,6 +9,9 @@
   catalogCacheHours: 24,
   holidayCacheHours: 24,
   cacheChunkSize: 8000,
+  tradingDayWindow: 5,
+  kisMinIntervalMs: 450,
+  kisRetryDelaysMs: [900, 1600],
   recentHistoryLookbackDays: 10,
   propertyPrefix: 'stock_eq_gateway_v1',
   masterSources: [
@@ -50,6 +55,8 @@ function routeGatewayAction_(action, params) {
       return handleStockCatalog_(params);
     case 'stock-search':
       return handleStockSearch_(params);
+    case 'sheet-sync-targets':
+      return handleSheetSyncTargets_(params);
     case 'equity-month':
       return handleEquityMonth_(params);
     case 'index-month':
@@ -84,12 +91,38 @@ function handleStockCatalog_(params) {
 }
 
 function handleHealth_() {
+  var dataSource = String(getSetting_('DATA_SOURCE', 'KIS')).trim().toUpperCase() || 'KIS';
+  var sheetInfo = getSheetDebugInfo_(dataSource);
   return {
     ok: true,
     service: 'stock-eq-gateway',
+    gatewayVersion: STOCK_EQ_GATEWAY.gatewayVersion,
+    healthSchemaVersion: STOCK_EQ_GATEWAY.healthSchemaVersion,
     now: formatKstTimestamp_(new Date()),
-    hasCredentials: Boolean(getSetting_('KIS_APP_KEY', '') && getSetting_('KIS_APP_SECRET', ''))
+    hasCredentials: Boolean(getSetting_('KIS_APP_KEY', '') && getSetting_('KIS_APP_SECRET', '')),
+    dataSource: dataSource,
+    sheet: sheetInfo
   };
+}
+
+function getSheetDebugInfo_(dataSource) {
+  var spreadsheetId = String(getSetting_('SHEET_SPREADSHEET_ID', '')).trim();
+  var sheetName = String(getSetting_('SHEET_NAME', '')).trim();
+  var info = {
+    spreadsheetId: spreadsheetId || null,
+    configuredSheetName: sheetName || null
+  };
+  if (dataSource !== 'SHEET' || !spreadsheetId) {
+    return info;
+  }
+  try {
+    var sheet = getConfiguredSheet_();
+    info.resolvedSheetName = String(sheet.getName() || '');
+    info.resolvedSheetId = sheet.getSheetId();
+  } catch (error) {
+    info.error = String(error && error.message ? error.message : error);
+  }
+  return info;
 }
 
 function handleStockSearch_(params) {
@@ -112,12 +145,16 @@ function handleStockSearch_(params) {
 function handleEquityMonth_(params) {
   var stock = resolveStock_(params.ticker || params.q || '');
   var selectedDate = coerceIsoDate_(params.date);
+  var slotNumber = Number(params.slot || 0);
+  if (isSheetDataSourceMode_()) {
+    return buildSheetMonthResponse_(stock, selectedDate, slotNumber);
+  }
   var monthStart = startOfMonthIso_(selectedDate);
   var holidays = getMonthlyHolidayDates_(selectedDate);
-  var boundaryHolidays = getBoundaryHolidayDates_(selectedDate);
-  var historyEndDate = resolveSeriesEndDate_(selectedDate, boundaryHolidays);
+  var historyEndDate = resolveSeriesEndDate_(selectedDate, holidays);
   var rows = fetchDailyCloseRows_(stock.code, addDaysIso_(monthStart, -40), historyEndDate);
   var partition = partitionMonthRows_(rows, monthStart);
+  var limited = limitRecentTradingRowsWithBaseline_(partition.rows, partition.baselineDate, partition.baselineClose, STOCK_EQ_GATEWAY.tradingDayWindow);
   var lastTradingDate = inferLastTradingDate_(historyEndDate, monthStart, partition.rows, holidays);
 
   return {
@@ -125,9 +162,9 @@ function handleEquityMonth_(params) {
     stock: stock,
     selectedDate: selectedDate,
     lastTradingDate: lastTradingDate,
-    baselineDate: partition.baselineDate,
-    baselineClose: partition.baselineClose,
-    rows: partition.rows,
+    baselineDate: limited.baselineDate,
+    baselineClose: limited.baselineClose,
+    rows: limited.rows,
     holidays: holidays,
     source: 'kis-open-api'
   };
@@ -136,12 +173,15 @@ function handleEquityMonth_(params) {
 function handleIndexMonth_(params) {
   var stock = resolveIndexBenchmark_(params.indexCode || params.q || '0001');
   var selectedDate = coerceIsoDate_(params.date);
+  if (isSheetDataSourceMode_()) {
+    return buildSheetMonthResponse_(stock, selectedDate, 0);
+  }
   var monthStart = startOfMonthIso_(selectedDate);
   var holidays = getMonthlyHolidayDates_(selectedDate);
-  var boundaryHolidays = getBoundaryHolidayDates_(selectedDate);
-  var historyEndDate = resolveSeriesEndDate_(selectedDate, boundaryHolidays);
+  var historyEndDate = resolveSeriesEndDate_(selectedDate, holidays);
   var rows = fetchIndexDailyRows_(stock.code, historyEndDate);
   var partition = partitionMonthRows_(rows, monthStart);
+  var limited = limitRecentTradingRowsWithBaseline_(partition.rows, partition.baselineDate, partition.baselineClose, STOCK_EQ_GATEWAY.tradingDayWindow);
   var lastTradingDate = inferLastTradingDate_(historyEndDate, monthStart, partition.rows, holidays);
 
   return {
@@ -149,9 +189,9 @@ function handleIndexMonth_(params) {
     stock: stock,
     selectedDate: selectedDate,
     lastTradingDate: lastTradingDate,
-    baselineDate: partition.baselineDate,
-    baselineClose: partition.baselineClose,
-    rows: partition.rows,
+    baselineDate: limited.baselineDate,
+    baselineClose: limited.baselineClose,
+    rows: limited.rows,
     holidays: holidays,
     source: 'kis-open-api'
   };
@@ -160,6 +200,18 @@ function handleIndexMonth_(params) {
 function handleIntradaySnapshot_(params) {
   var stock = resolveStock_(params.ticker || params.q || '');
   var selectedDate = coerceIsoDate_(params.date);
+  if (isSheetDataSourceMode_()) {
+    return {
+      ok: true,
+      date: selectedDate,
+      price: null,
+      prevClose: null,
+      equalRate: null,
+      asOf: formatKstTimestamp_(new Date()),
+      session: 'historical',
+      source: 'sheet'
+    };
+  }
   var holidays = getMonthlyHolidayDates_(selectedDate);
   var session = resolveGatewaySession_(selectedDate, holidays);
   var timestamp = formatKstTimestamp_(new Date());
@@ -224,6 +276,18 @@ function handleIntradaySnapshot_(params) {
 function handleIndexSnapshot_(params) {
   var stock = resolveIndexBenchmark_(params.indexCode || params.q || '0001');
   var selectedDate = coerceIsoDate_(params.date);
+  if (isSheetDataSourceMode_()) {
+    return {
+      ok: true,
+      date: selectedDate,
+      price: null,
+      prevClose: null,
+      equalRate: null,
+      asOf: formatKstTimestamp_(new Date()),
+      session: 'historical',
+      source: 'sheet'
+    };
+  }
   var holidays = getMonthlyHolidayDates_(selectedDate);
   var session = resolveGatewaySession_(selectedDate, holidays);
   var timestamp = formatKstTimestamp_(new Date());
@@ -294,6 +358,199 @@ function resolveIndexBenchmark_(input) {
     return { code: '2001', name: 'KOSPI200', market: 'INDEX', assetType: 'index' };
   }
   throw createHttpError_(400, '지원하지 않는 지수 코드입니다: ' + code);
+}
+
+function isSheetDataSourceMode_() {
+  return String(getSetting_('DATA_SOURCE', 'KIS')).trim().toUpperCase() === 'SHEET';
+}
+
+function handleSheetSyncTargets_(params) {
+  if (!isSheetDataSourceMode_()) {
+    return {
+      ok: true,
+      source: 'kis-open-api',
+      skipped: true
+    };
+  }
+
+  var rawTickers = String(params.tickers || '').trim();
+  var tickers = rawTickers ? rawTickers.split(',').map(function (value) {
+    return sanitizeStockCode_(value);
+  }) : [];
+
+  var sheet = getConfiguredSheet_();
+  var writeValues = [['0001']];
+  for (var i = 0; i < 7; i += 1) {
+    writeValues.push([tickers[i] || '']);
+  }
+  sheet.getRange(2, 2, 1, 8).setValues([[
+    writeValues[0][0],
+    writeValues[1][0],
+    writeValues[2][0],
+    writeValues[3][0],
+    writeValues[4][0],
+    writeValues[5][0],
+    writeValues[6][0],
+    writeValues[7][0]
+  ]]);
+
+  return {
+    ok: true,
+    source: 'sheet',
+    syncedTickers: tickers
+  };
+}
+
+function buildSheetMonthResponse_(stock, selectedDate, slotNumber) {
+  var monthStart = startOfMonthIso_(selectedDate);
+  var sheetSeries = loadSheetEqualRateSeries_(stock, selectedDate, slotNumber);
+  var partition = partitionMonthRows_(sheetSeries.rows, monthStart);
+  var limited = limitRecentTradingRowsWithBaseline_(partition.rows, partition.baselineDate, partition.baselineClose, STOCK_EQ_GATEWAY.tradingDayWindow);
+  var lastTradingDate = limited.rows.length ? limited.rows[limited.rows.length - 1].date : selectedDate;
+
+  return {
+    ok: true,
+    stock: stock,
+    selectedDate: selectedDate,
+    lastTradingDate: lastTradingDate,
+    baselineDate: limited.baselineDate,
+    baselineClose: limited.baselineClose,
+    rows: limited.rows,
+    holidays: [],
+    source: 'sheet'
+  };
+}
+
+function loadSheetEqualRateSeries_(stock, selectedDate, slotNumber) {
+  var sheet = getConfiguredSheet_();
+  var values = sheet.getDataRange().getValues();
+  if (!values || values.length < 2) {
+    throw createHttpError_(500, '스프레드시트 데이터가 비어 있습니다.');
+  }
+
+  var headers = values[0].map(function (value) { return String(value || '').trim(); });
+  var targetColumn = findSheetColumnIndexBySlot_(headers, stock, slotNumber);
+  if (targetColumn < 0) {
+    throw createHttpError_(400, '시트에서 종목 컬럼을 찾지 못했습니다: ' + (stock.name || stock.code));
+  }
+
+  var monthKey = selectedDate.slice(0, 7);
+  var equalRateRows = [];
+  for (var i = 1; i < values.length; i += 1) {
+    var row = values[i];
+    var dateIso = parseSheetDateToIso_(row[0]);
+    if (!dateIso || dateIso.slice(0, 7) !== monthKey || dateIso > selectedDate) continue;
+    var equalRate = toEqualRateNumber_(row[targetColumn]);
+    if (!isFiniteNumber_(equalRate)) continue;
+    equalRateRows.push({ date: dateIso, equalRate: equalRate });
+  }
+
+  equalRateRows.sort(function (left, right) {
+    return left.date.localeCompare(right.date);
+  });
+  if (!equalRateRows.length) {
+    return { rows: [] };
+  }
+
+  var rows = [];
+  var previousClose = 100;
+  for (var index = 0; index < equalRateRows.length; index += 1) {
+    var item = equalRateRows[index];
+    var close = roundNumber_(previousClose * (1 + item.equalRate), 8);
+    rows.push({
+      date: item.date,
+      close: close
+    });
+    previousClose = close;
+  }
+
+  return { rows: rows };
+}
+
+function findSheetColumnIndex_(headers, stock) {
+  return findSheetColumnIndexBySlot_(headers, stock, 0);
+}
+
+function findSheetColumnIndexBySlot_(headers, stock, slotNumber) {
+  var safeSlot = Number(slotNumber || 0);
+  if (safeSlot > 0) {
+    return Math.min(2 + (safeSlot - 1), headers.length - 1);
+  }
+  var normalizedHeaders = headers.map(function (header) { return normalizeSearchText_(header); });
+  var candidates = [];
+  if (String(stock.code || '') === '0001' || normalizeSearchText_(stock.name || '') === 'kospi') {
+    candidates.push('kospi');
+    candidates.push('지수');
+  } else {
+    candidates.push(normalizeSearchText_(stock.code || ''));
+    candidates.push(normalizeSearchText_(stock.name || ''));
+  }
+
+  for (var i = 1; i < normalizedHeaders.length; i += 1) {
+    for (var j = 0; j < candidates.length; j += 1) {
+      var keyword = candidates[j];
+      if (!keyword) continue;
+      if (normalizedHeaders[i] === keyword || normalizedHeaders[i].indexOf(keyword) >= 0) {
+        return i;
+      }
+    }
+  }
+  return -1;
+}
+
+function getConfiguredSheet_() {
+  var spreadsheetId = String(getSetting_('SHEET_SPREADSHEET_ID', '')).trim();
+  if (!spreadsheetId) {
+    throw createHttpError_(500, 'DATA_SOURCE=SHEET 인 경우 SHEET_SPREADSHEET_ID 를 설정해 주세요.');
+  }
+
+  var sheetName = String(getSetting_('SHEET_NAME', '')).trim();
+  var spreadsheet = SpreadsheetApp.openById(spreadsheetId);
+  var sheet = sheetName ? spreadsheet.getSheetByName(sheetName) : spreadsheet.getSheets()[0];
+  if (!sheet) {
+    throw createHttpError_(500, '설정한 SHEET_NAME 시트를 찾지 못했습니다.');
+  }
+  return sheet;
+}
+
+function parseSheetDateToIso_(value) {
+  if (Object.prototype.toString.call(value) === '[object Date]' && !isNaN(value.getTime())) {
+    return Utilities.formatDate(value, STOCK_EQ_GATEWAY.timezone, 'yyyy-MM-dd');
+  }
+  var raw = String(value || '').trim();
+  if (!raw) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  if (/^\d{8}$/.test(raw)) return basicToIso_(raw);
+  if (/^\d{1,2}-\d{1,2}$/.test(raw)) {
+    var year = todayIsoKst_().slice(0, 4);
+    var parts = raw.split('-');
+    var month = ('0' + Number(parts[0])).slice(-2);
+    var day = ('0' + Number(parts[1])).slice(-2);
+    return year + '-' + month + '-' + day;
+  }
+  if (/^\d{1,2}\/\d{1,2}$/.test(raw)) {
+    var yearSlash = todayIsoKst_().slice(0, 4);
+    var slashParts = raw.split('/');
+    var slashMonth = ('0' + Number(slashParts[0])).slice(-2);
+    var slashDay = ('0' + Number(slashParts[1])).slice(-2);
+    return yearSlash + '-' + slashMonth + '-' + slashDay;
+  }
+  return null;
+}
+
+function toEqualRateNumber_(value) {
+  if (value === null || value === undefined || value === '') return null;
+  var raw = String(value).trim();
+  var hasPercent = raw.indexOf('%') >= 0;
+  var parsed = Number(raw.replace(/,/g, '').replace(/%/g, ''));
+  if (!isFiniteNumber_(parsed)) return null;
+  if (hasPercent) {
+    return parsed / 100;
+  }
+  if (Math.abs(parsed) > 1) {
+    return parsed / 100;
+  }
+  return parsed;
 }
 
 function resolveStock_(input) {
@@ -694,16 +951,39 @@ function callKisGetWithHeaders_(path, trId, params, extraHeaders) {
 
   assignOwnProperties_(headers, extraHeaders || {});
   var url = buildUrl_(getSetting_('KIS_BASE_URL', STOCK_EQ_GATEWAY.defaultBaseUrl) + path, params);
-  var response = UrlFetchApp.fetch(url, {
-    method: 'get',
-    headers: headers,
-    muteHttpExceptions: true,
-    followRedirects: true
-  });
+  var response = null;
+  var statusCode = 0;
+  var text = '';
+  var json = null;
 
-  var statusCode = response.getResponseCode();
-  var text = response.getContentText();
-  var json = safeJsonParse_(text);
+  for (var attempt = 0; attempt <= STOCK_EQ_GATEWAY.kisRetryDelaysMs.length; attempt += 1) {
+    waitForKisRequestSlot_();
+    response = UrlFetchApp.fetch(url, {
+      method: 'get',
+      headers: headers,
+      muteHttpExceptions: true,
+      followRedirects: true
+    });
+
+    statusCode = response.getResponseCode();
+    text = response.getContentText();
+    json = safeJsonParse_(text);
+
+    var hasError = statusCode >= 400 || (json && json.rt_cd && String(json.rt_cd) !== '0');
+    if (!hasError) {
+      break;
+    }
+
+    if (!isKisRateLimitResponse_(statusCode, json, text) || attempt >= STOCK_EQ_GATEWAY.kisRetryDelaysMs.length) {
+      if (statusCode >= 400) {
+        throw createHttpError_(statusCode, extractKisErrorMessage_(json, text));
+      }
+      throw createHttpError_(502, extractKisErrorMessage_(json, text));
+    }
+
+    Utilities.sleep(Number(STOCK_EQ_GATEWAY.kisRetryDelaysMs[attempt] || 900));
+  }
+
   if (statusCode >= 400) {
     throw createHttpError_(statusCode, extractKisErrorMessage_(json, text));
   }
@@ -717,6 +997,33 @@ function callKisGetWithHeaders_(path, trId, params, extraHeaders) {
     statusCode: statusCode,
     text: text
   };
+}
+
+function waitForKisRequestSlot_() {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var key = cacheKey_('kis_last_request_ms');
+    var lastTs = Number(props.getProperty(key) || 0);
+    var now = Date.now();
+    var waitMs = Math.max(0, Number(STOCK_EQ_GATEWAY.kisMinIntervalMs || 0) - (now - lastTs));
+    if (waitMs > 0) {
+      Utilities.sleep(waitMs);
+    }
+    props.setProperty(key, String(Date.now()));
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function isKisRateLimitResponse_(statusCode, json, text) {
+  var message = String(extractKisErrorMessage_(json, text) || '').toLowerCase();
+  if (message.indexOf('초당 거래건수') >= 0) return true;
+  if (message.indexOf('rate limit') >= 0) return true;
+  if (message.indexOf('too many') >= 0) return true;
+  if (message.indexOf('egw00123') >= 0) return true;
+  return statusCode === 429;
 }
 
 function getAccessToken_() {
@@ -891,6 +1198,27 @@ function partitionMonthRows_(rows, monthStart) {
     baselineDate: baseline ? baseline.date : null,
     baselineClose: baseline ? baseline.close : null,
     rows: monthRows
+  };
+}
+
+function limitRecentTradingRowsWithBaseline_(rows, baselineDate, baselineClose, windowSize) {
+  var maxRows = Math.max(1, Number(windowSize || 0) || STOCK_EQ_GATEWAY.tradingDayWindow);
+  if (!rows || rows.length <= maxRows) {
+    return {
+      baselineDate: baselineDate || null,
+      baselineClose: baselineClose || null,
+      rows: rows || []
+    };
+  }
+
+  var startIndex = rows.length - maxRows;
+  var limitedRows = rows.slice(startIndex);
+  var previousRow = rows[startIndex - 1] || null;
+
+  return {
+    baselineDate: previousRow ? previousRow.date : (baselineDate || null),
+    baselineClose: previousRow ? previousRow.close : (baselineClose || null),
+    rows: limitedRows
   };
 }
 
@@ -1146,4 +1474,3 @@ function clearCachedValue_(suffix, chunkCount) {
     props.deleteProperty(cacheChunkKey_(suffix, i));
   }
 }
-
