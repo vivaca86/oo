@@ -121,3 +121,10 @@
 - User still hit `초당 거래건수를 초과하였습니다.` even with 1 slot.
 - Reduced KIS API usage in month handlers by removing extra boundary holiday fetch when resolving series end date.
 - `handleEquityMonth_` / `handleIndexMonth_` now reuse the already-fetched current-month holiday list for session/date resolution.
+
+### Temporary display/data window reduction (5 trading days)
+
+- User requested reducing month-range loading to a 5-business-day window first.
+- Added gateway-side row limiting with baseline preservation so returned month rows are clipped to the latest 5 trading days.
+- Updated frontend header/description text and aggregate labels to show `최근 5영업일` semantics.
+- Kept the change reversible by using explicit constants (`tradingDayWindow`, `DISPLAY_TRADING_DAY_WINDOW`).
