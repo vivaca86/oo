@@ -61,3 +61,63 @@
 - Set `KIS_APP_KEY` and `KIS_APP_SECRET` in Render
 - Update `config.js` `realtimeUrl`
 - Push and verify public live updates
+
+## 2026-04-10
+
+### Realtime relay deployment completed
+
+- Deployed realtime relay to Render free web service.
+- Production relay URL: `https://oo-l347.onrender.com`
+- `/health` checked in browser and confirmed `ok: true`, `hasCredentials: true`.
+
+### Frontend config
+
+- Updated `config.js` `realtimeUrl` to `https://oo-l347.onrender.com/stream`.
+
+### Verified
+
+- Render deployment status showed successful build.
+- Relay health endpoint responded with JSON and credentials enabled.
+
+### Blockers
+
+- None at deployment step.
+
+### Next step
+
+- Push latest commit and confirm GitHub Pages serves updated `config.js`.
+- Verify live market updates and fallback behavior from the public site.
+
+### Slot control and monthly header summary refinement
+
+- User feedback: fixed-slot UX felt limiting and slot header needed clearer monthly aggregate meaning.
+- Added slot-count selector in UI (`3~7`) so visible stock columns can be adjusted without code changes.
+- Kept default visible slots at 3, but expanded runtime support to 7 with state persistence.
+- Updated slot secondary text to show monthly equal-rate aggregate range and value (e.g., `4/1~4/10`).
+
+### Verification
+
+- `node --check app.js` passed after slot-count/state updates.
+- `node --check realtime-relay/server.mjs` passed (no regressions in relay path changes).
+
+### Next step
+
+- Confirm GitHub Pages reflects slot selector and monthly aggregate labels in production UI.
+
+### Gateway rate-limit handling hardening
+
+- User reported intermittent `초당 거래건수를 초과하였습니다.` even with a small slot count.
+- Added gateway client-side pacing and rate-limit-aware retries with backoff in frontend adapter logic.
+- Goal: reduce transient load failures by spacing calls more conservatively and retrying automatically on rate-limit responses.
+
+### Slot minimization + KOSPI monthly aggregate
+
+- On additional user request, lowered minimum/default slot count to `1` for aggressive load reduction tests.
+- Expanded slot-count selector range to `1~7`.
+- Added KOSPI header monthly equal-rate aggregate text to match stock slot aggregate display.
+
+### Apps Script month handler optimization for rate limits
+
+- User still hit `초당 거래건수를 초과하였습니다.` even with 1 slot.
+- Reduced KIS API usage in month handlers by removing extra boundary holiday fetch when resolving series end date.
+- `handleEquityMonth_` / `handleIndexMonth_` now reuse the already-fetched current-month holiday list for session/date resolution.

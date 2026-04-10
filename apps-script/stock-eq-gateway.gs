@@ -114,8 +114,7 @@ function handleEquityMonth_(params) {
   var selectedDate = coerceIsoDate_(params.date);
   var monthStart = startOfMonthIso_(selectedDate);
   var holidays = getMonthlyHolidayDates_(selectedDate);
-  var boundaryHolidays = getBoundaryHolidayDates_(selectedDate);
-  var historyEndDate = resolveSeriesEndDate_(selectedDate, boundaryHolidays);
+  var historyEndDate = resolveSeriesEndDate_(selectedDate, holidays);
   var rows = fetchDailyCloseRows_(stock.code, addDaysIso_(monthStart, -40), historyEndDate);
   var partition = partitionMonthRows_(rows, monthStart);
   var lastTradingDate = inferLastTradingDate_(historyEndDate, monthStart, partition.rows, holidays);
@@ -138,8 +137,7 @@ function handleIndexMonth_(params) {
   var selectedDate = coerceIsoDate_(params.date);
   var monthStart = startOfMonthIso_(selectedDate);
   var holidays = getMonthlyHolidayDates_(selectedDate);
-  var boundaryHolidays = getBoundaryHolidayDates_(selectedDate);
-  var historyEndDate = resolveSeriesEndDate_(selectedDate, boundaryHolidays);
+  var historyEndDate = resolveSeriesEndDate_(selectedDate, holidays);
   var rows = fetchIndexDailyRows_(stock.code, historyEndDate);
   var partition = partitionMonthRows_(rows, monthStart);
   var lastTradingDate = inferLastTradingDate_(historyEndDate, monthStart, partition.rows, holidays);
@@ -1146,4 +1144,3 @@ function clearCachedValue_(suffix, chunkCount) {
     props.deleteProperty(cacheChunkKey_(suffix, i));
   }
 }
-
