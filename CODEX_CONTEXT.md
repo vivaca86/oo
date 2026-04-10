@@ -61,6 +61,8 @@ Build a stock equal-rate web app that behaves like the user's Google Sheet model
 - Realtime relay is deployed on Render: `https://oo-l347.onrender.com`.
 - Stock slot UI now starts at 1 slot but supports user-adjustable range 1~7 from the page control.
 - Month-series UI is currently narrowed to the most recent 5 trading days (easy to restore by changing the configured window constants).
+- Gateway supports a `DATA_SOURCE=SHEET` mode to read equal-rate rows from a Google Spreadsheet instead of KIS API calls.
+- In `DATA_SOURCE=SHEET`, frontend can call `sheet-sync-targets` to push selected tickers into sheet input cells before month reads.
 - Frontend logic already supports:
   - realtime relay via SSE when `realtimeUrl` exists
   - REST fallback if the relay is absent or fails

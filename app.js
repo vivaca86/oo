@@ -578,13 +578,13 @@ function createGatewayAdapter(baseUrl) {
             const payload = await request('stock-search', { q: query });
             return Array.isArray(payload?.items) ? payload.items.map(enrichStockMeta) : [];
         },
-        async loadSeries(target, selectedDate) {
+        async loadSeries(target, selectedDate, slotId = null) {
             const action = target.assetType === 'index' ? 'index-month' : 'equity-month';
             const payload = await request(
                 action,
                 target.assetType === 'index'
                     ? { indexCode: target.code, date: selectedDate }
-                    : { ticker: target.code, date: selectedDate }
+                    : { ticker: target.code, date: selectedDate, slot: slotId }
             );
             return {
                 stock: enrichStockMeta(payload?.stock || target),
@@ -614,6 +614,11 @@ function createGatewayAdapter(baseUrl) {
                 asOf: payload.asOf || '',
                 session: payload.session || 'open'
             };
+        },
+        async syncSheetTargets(targets = []) {
+            const tickers = (targets || []).map((item) => String(item || '').trim()).filter(Boolean);
+            if (!tickers.length) return null;
+            return request('sheet-sync-targets', { tickers: tickers.join(',') });
         }
     };
 }
@@ -1022,12 +1027,20 @@ function renderTable(matrixRows) {
 }
 
 async function fetchSeriesCollection(adapter) {
+    if (adapter?.syncSheetTargets) {
+        try {
+            const selectedCodes = appState.slots.map((slot) => slot?.stock?.code || '');
+            await adapter.syncSheetTargets(selectedCodes);
+        } catch (error) {
+            console.warn('sheet-sync-targets failed', error);
+        }
+    }
     const targets = [KOSPI_BENCHMARK, ...appState.slots.map((slot) => slot.stock)];
     const seriesCollection = await mapSequential(targets, async (target, index) => {
         if (!target) {
             return { slotId: index, target: null, series: null, rows: [], liveSnapshot: null };
         }
-        const series = await adapter.loadSeries(target, appState.selectedDate);
+        const series = await adapter.loadSeries(target, appState.selectedDate, index);
         return { slotId: index, target, series, rows: [], liveSnapshot: null };
     }, GATEWAY_REQUEST_SPACING_MS);
     const holidaySet = new Set(seriesCollection.flatMap((item) => item.series?.holidays || []));
