@@ -70,6 +70,7 @@ Build a stock equal-rate web app that behaves like the user's Google Sheet model
   - realtime relay via SSE when `realtimeUrl` exists
   - REST fallback if the relay is absent or fails
 - Frontend is now forced into a SHEET-first pipeline mode (`FORCE_SHEET_PIPELINE=true`): realtime/polling paths are bypassed and apply flow syncs selected date + names/tickers to sheet input cells before month reads.
+- Frontend stock name/code resolution is now local-only (built-in catalog); remote gateway stock-search/catalog fetch paths are bypassed for the apply flow.
 
 ## Important Technical Findings
 

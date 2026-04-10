@@ -671,7 +671,7 @@ function searchLocalStocks(query) {
     }
     return [...exact, ...prefix, ...contains];
 }
-async function searchStocksWithFallback(adapter, query) {
+async function searchStocksWithFallback(_adapter, query) {
     const normalized = String(query || '').trim();
     if (!normalized) return [];
     const seen = new Set();
@@ -686,17 +686,11 @@ async function searchStocksWithFallback(adapter, query) {
         }
     }
     pushItems(searchLocalStocks(normalized));
-    if (!collected.length) {
-        pushItems(await adapter.searchStocks(normalized));
-    }
     if (collected.length) return collected;
     const compact = normalizeText(normalized);
     for (let end = compact.length - 1; end >= 2; end -= 1) {
         const candidate = compact.slice(0, end);
         pushItems(searchLocalStocks(candidate));
-        if (!collected.length) {
-            pushItems(await adapter.searchStocks(candidate));
-        }
         if (collected.length) break;
     }
     return collected;
@@ -723,19 +717,7 @@ function mergeCatalogItems(baseItems, nextItems) {
     return merged;
 }
 async function ensureCatalogLoaded() {
-    const adapter = getActiveAdapter();
-    if (!adapter?.loadCatalog) {
-        appState.catalog = mergeCatalogItems(STOCK_CATALOG, []);
-        buildCatalogDatalist();
-        return;
-    }
-    try {
-        const kospiItems = await adapter.loadCatalog('KOSPI');
-        appState.catalog = mergeCatalogItems(STOCK_CATALOG, kospiItems);
-    } catch (error) {
-        console.error('catalog load failed', error);
-        appState.catalog = mergeCatalogItems(STOCK_CATALOG, []);
-    }
+    appState.catalog = mergeCatalogItems(STOCK_CATALOG, []);
     buildCatalogDatalist();
 }
 
@@ -945,7 +927,7 @@ function renderSelectionNote(seriesCollection) {
         ? `선택일 ${appState.selectedDate}이 거래일이 아니거나 장중이라 실제 월 계산은 ${actualEnd} 기준으로 맞췄습니다.`
         : `기준일 ${appState.selectedDate}이 속한 월의 거래일만 역순으로 보여줍니다.`;
     const realtimeNote = FORCE_SHEET_PIPELINE
-        ? '현재는 SHEET 파이프라인 전용 모드입니다. 기준일/종목명을 티커로 변환해 시트 입력셀로 동기화한 뒤 시트 계산값만 읽어옵니다.'
+        ? '현재는 SHEET 파이프라인 전용 모드입니다. 프론트 내장 종목사전(이름/코드)으로 티커를 매칭해 시트 입력셀로 동기화한 뒤 시트 계산값만 읽어옵니다.'
         : (appState.dataMode === 'gateway'
             ? (appState.session === 'open'
                 ? (shouldUseRealtimeStream()
@@ -1038,8 +1020,14 @@ function renderTable(matrixRows) {
 async function fetchSeriesCollection(adapter) {
     if (adapter?.syncSheetTargets) {
         try {
-            const selectedCodes = appState.slots.map((slot) => slot?.stock?.code || '');
-            const selectedNames = appState.slots.map((slot) => slot?.stock?.name || slot?.query || '');
+            const selectedCodes = appState.slots.map((slot) => {
+                const resolved = slot?.stock || findLocalStock(slot?.query || '');
+                return resolved?.code || '';
+            });
+            const selectedNames = appState.slots.map((slot) => {
+                const resolved = slot?.stock || findLocalStock(slot?.query || '');
+                return resolved?.name || String(slot?.query || '').trim();
+            });
             await adapter.syncSheetTargets(selectedCodes, appState.selectedDate, selectedNames);
         } catch (error) {
             console.warn('sheet-sync-targets failed', error);

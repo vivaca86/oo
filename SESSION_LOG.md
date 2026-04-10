@@ -235,3 +235,22 @@
 
 - 사용자 Apps Script에서 최신 코드 배포 후 `/exec?action=health`에 `gatewayVersion: 2026-04-10.2` 확인.
 - 웹페이지에서 기준일/종목 입력 후 시트 `A2`, `B2~I2`, `J2~P2`가 즉시 갱신되는지 확인.
+
+### SHEET 경로 추가 단순화: 종목 조회 로직 로컬 전용
+
+- 사용자 이슈(하이브 입력 시 C2 미갱신) 대응으로 적용 흐름을 더 단순화.
+- 프론트 종목 매칭을 원격 API 호출 없이 로컬 카탈로그 전용으로 고정:
+  - `searchStocksWithFallback`에서 gateway `stock-search` 호출 제거
+  - `ensureCatalogLoaded`에서 gateway `stock-catalog` 호출 제거
+- `sheet-sync-targets` 전송 직전에 슬롯별 코드/이름을 다시 로컬 매칭하여 `selectedCodes/selectedNames`를 생성하도록 보강.
+  - 목표: blur/비동기 타이밍 이슈가 있어도 `조회` 클릭 시점 입력값 기준으로 C2~I2 동기화되게 함.
+
+### Verification
+
+- `node --check app.js` passed.
+- `tmp=$(mktemp /tmp/gateway-XXXXXX.js); cp apps-script/stock-eq-gateway.gs "$tmp"; node --check "$tmp"; rm -f "$tmp"` passed.
+- `rg -n "searchStocksWithFallback|ensureCatalogLoaded|selectedCodes = appState\.slots\.map|FORCE_SHEET_PIPELINE" app.js` 확인 완료.
+
+### Next step
+
+- 실환경에서 `하이브` 입력 후 `조회` 클릭 시 시트 `C2=352820` 반영 확인.
