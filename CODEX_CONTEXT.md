@@ -64,6 +64,7 @@ Build a stock equal-rate web app that behaves like the user's Google Sheet model
 - Gateway supports a `DATA_SOURCE=SHEET` mode to read equal-rate rows from a Google Spreadsheet instead of KIS API calls.
 - In `DATA_SOURCE=SHEET`, frontend can call `sheet-sync-targets` to push selected tickers into sheet input cells before month reads.
 - Gateway `health` now returns sheet debug metadata (`spreadsheetId`, configured/resolved sheet name) for deployment validation.
+- Gateway `health` now returns `gatewayVersion` and `healthSchemaVersion` so stale Apps Script deployments can be detected immediately.
 - SHEET mode parser supports percent cells (e.g., `3.06%`) and short date strings (`04-09`, `04/09`) in sheet rows.
 - Frontend logic already supports:
   - realtime relay via SSE when `realtimeUrl` exists
@@ -125,14 +126,15 @@ On 2026-04-10 (Render production):
 
 The next agent should continue with these steps in order:
 
-1. Verify GitHub Pages uses the latest `config.js` with relay URL:
+1. Verify Apps Script `action=health` returns `gatewayVersion: 2026-04-10.1` from the active `/exec` URL.
+2. Verify GitHub Pages uses the latest `config.js` with relay URL:
    - `realtimeUrl: https://oo-l347.onrender.com/stream`
-2. Verify the public site behavior during market hours:
+3. Verify the public site behavior during market hours:
    - site loads
    - today row updates from relay
    - relay failure triggers REST fallback
-3. Monitor Render free instance cold-start behavior and decide if paid upgrade is needed
-4. Keep `CODEX_CONTEXT.md` and `SESSION_LOG.md` updated after each verification session
+4. Monitor Render free instance cold-start behavior and decide if paid upgrade is needed
+5. Keep `CODEX_CONTEXT.md` and `SESSION_LOG.md` updated after each verification session
 
 ## If Continuing In Web Codex
 

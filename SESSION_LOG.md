@@ -165,3 +165,22 @@
 - User provided another newly deployed Apps Script web-app URL.
 - Updated frontend `config.js` gateway URL and context URL reference to this latest endpoint.
 
+
+### Gateway health version marker for stale deploy detection
+
+- User-side troubleshooting showed Script Properties could be updated while an older Apps Script code deployment remained active.
+- Added explicit `gatewayVersion` (`2026-04-10.1`) and `healthSchemaVersion` fields to `action=health` response.
+- Updated gateway README with a deployment verification tip so the active `/exec` endpoint can be validated quickly.
+- Updated `CODEX_CONTEXT.md` next actions to start with checking `gatewayVersion` from the active health endpoint.
+
+### Verification
+
+- `tmp=$(mktemp /tmp/gateway-XXXXXX.js); cp apps-script/stock-eq-gateway.gs "$tmp"; node --check "$tmp"; rm -f "$tmp"` passed.
+
+### Blockers
+
+- No direct access to user's Apps Script deployment environment; cannot verify remote `/exec` response in this session.
+
+### Next step
+
+- In Apps Script editor, paste latest `apps-script/stock-eq-gateway.gs`, redeploy web app, and confirm `/exec?action=health` includes `gatewayVersion: 2026-04-10.1`.

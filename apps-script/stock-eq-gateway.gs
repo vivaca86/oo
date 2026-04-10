@@ -1,4 +1,6 @@
 ﻿var STOCK_EQ_GATEWAY = {
+  gatewayVersion: '2026-04-10.1',
+  healthSchemaVersion: 2,
   timezone: 'Asia/Seoul',
   defaultBaseUrl: 'https://openapi.koreainvestment.com:9443',
   defaultMarketDiv: 'J',
@@ -94,6 +96,8 @@ function handleHealth_() {
   return {
     ok: true,
     service: 'stock-eq-gateway',
+    gatewayVersion: STOCK_EQ_GATEWAY.gatewayVersion,
+    healthSchemaVersion: STOCK_EQ_GATEWAY.healthSchemaVersion,
     now: formatKstTimestamp_(new Date()),
     hasCredentials: Boolean(getSetting_('KIS_APP_KEY', '') && getSetting_('KIS_APP_SECRET', '')),
     dataSource: dataSource,
