@@ -1,5 +1,5 @@
 ﻿var STOCK_EQ_GATEWAY = {
-  gatewayVersion: '2026-04-10.1',
+  gatewayVersion: '2026-04-10.2',
   healthSchemaVersion: 2,
   timezone: 'Asia/Seoul',
   defaultBaseUrl: 'https://openapi.koreainvestment.com:9443',
@@ -377,8 +377,15 @@ function handleSheetSyncTargets_(params) {
   var tickers = rawTickers ? rawTickers.split(',').map(function (value) {
     return sanitizeStockCode_(value);
   }) : [];
+  var selectedDate = coerceIsoDate_(params.date);
+  var rawNames = String(params.names || '').trim();
+  var names = rawNames ? rawNames.split('|').map(function (value) {
+    return String(value || '').trim();
+  }) : [];
 
   var sheet = getConfiguredSheet_();
+  sheet.getRange(2, 1).setValue(selectedDate);
+
   var writeValues = [['0001']];
   for (var i = 0; i < 7; i += 1) {
     writeValues.push([tickers[i] || '']);
@@ -394,10 +401,18 @@ function handleSheetSyncTargets_(params) {
     writeValues[7][0]
   ]]);
 
+  var writeNames = [];
+  for (var idx = 0; idx < 7; idx += 1) {
+    writeNames.push(names[idx] || '');
+  }
+  sheet.getRange(2, 10, 1, 7).setValues([writeNames]);
+
   return {
     ok: true,
     source: 'sheet',
-    syncedTickers: tickers
+    selectedDate: selectedDate,
+    syncedTickers: tickers,
+    syncedNames: writeNames
   };
 }
 

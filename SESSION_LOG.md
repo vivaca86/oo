@@ -184,3 +184,54 @@
 ### Next step
 
 - In Apps Script editor, paste latest `apps-script/stock-eq-gateway.gs`, redeploy web app, and confirm `/exec?action=health` includes `gatewayVersion: 2026-04-10.1`.
+
+### Full repository validation pass (local + endpoint reachability)
+
+- Ran full local syntax/health checks for frontend JS, relay server, and Apps Script gateway source (via temporary `.js` copy).
+- Re-validated config alignment between `config.js` and `CODEX_CONTEXT.md` for current gateway/relay URLs and deployment-check marker (`gatewayVersion: 2026-04-10.1`).
+- Started relay locally and confirmed `/health` returns `200` with expected payload shape.
+
+### Verification
+
+- `node --check app.js` passed.
+- `node --check realtime-relay/server.mjs` passed.
+- `tmp=$(mktemp /tmp/gateway-XXXXXX.js); cp apps-script/stock-eq-gateway.gs "$tmp"; node --check "$tmp"; rm -f "$tmp"` passed.
+- `node realtime-relay/server.mjs` + `curl http://127.0.0.1:8787/health` returned `HTTP 200` (`ok: true`).
+- `rg -n "AKfycbz7...|oo-l347.onrender.com/stream|gatewayVersion: 2026-04-10.1" CODEX_CONTEXT.md config.js apps-script/README.md apps-script/stock-eq-gateway.gs` confirmed URL/version references are aligned.
+
+### Blockers
+
+- External calls from this environment to public endpoints returned tunnel `403 Forbidden`, so remote `/exec?action=health` and Render `/health` could not be directly verified here.
+
+### Next step
+
+- From user network/browser, call:
+  - `https://script.google.com/macros/s/AKfycbz7D26qQrv70b-BWxYXaQ8g5VKz2oRej4c-ueVxw5lXzLEHVtQMlQUgzAEeKa1el2OvuQ/exec?action=health`
+  - `https://oo-l347.onrender.com/health`
+  and confirm `gatewayVersion: 2026-04-10.1`, `ok: true`, and expected credential flags.
+
+### SHEET 전용 단순 파이프라인 강제 (요청 반영)
+
+- 사용자 요청에 맞춰 “기준일/종목명 입력 → 종목명 티커 변환 → 시트 입력셀 동기화 → 시트 결과 조회” 흐름을 명시적으로 강화.
+- 프론트 `FORCE_SHEET_PIPELINE=true`를 추가해 realtime/polling 경로를 우회하고, 월 데이터 조회 전에 `sheet-sync-targets`로 선택 종목 티커/이름 + 기준일을 항상 먼저 전송하도록 변경.
+- 게이트웨이 `sheet-sync-targets`를 확장해 시트 입력셀 동기화 범위를 다음으로 고정:
+  - `A2`: 기준일
+  - `B2`: KOSPI(0001)
+  - `C2~I2`: 주식1~7 티커
+  - `J2~P2`: 주식1~7 이름
+- 게이트웨이 버전을 `2026-04-10.2`로 상향해 배포 반영 여부를 `health`에서 즉시 확인 가능하게 함.
+
+### Verification
+
+- `node --check app.js` passed.
+- `tmp=$(mktemp /tmp/gateway-XXXXXX.js); cp apps-script/stock-eq-gateway.gs "$tmp"; node --check "$tmp"; rm -f "$tmp"` passed.
+- `rg -n "FORCE_SHEET_PIPELINE|syncSheetTargets\(|sheet-sync-targets|gatewayVersion" app.js apps-script/stock-eq-gateway.gs apps-script/README.md CODEX_CONTEXT.md` 확인 완료.
+
+### Blockers
+
+- 원격 Apps Script/Render 엔드포인트 실호출 검증은 실행 환경 터널 제한(`403`)으로 직접 검증 불가.
+
+### Next step
+
+- 사용자 Apps Script에서 최신 코드 배포 후 `/exec?action=health`에 `gatewayVersion: 2026-04-10.2` 확인.
+- 웹페이지에서 기준일/종목 입력 후 시트 `A2`, `B2~I2`, `J2~P2`가 즉시 갱신되는지 확인.

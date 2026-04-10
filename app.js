@@ -5,6 +5,7 @@ const GATEWAY_REQUEST_SPACING_MS = 420;
 const GATEWAY_MIN_INTERVAL_MS = 700;
 const GATEWAY_RETRY_DELAYS_MS = [900, 1600, 2400];
 const DISPLAY_TRADING_DAY_WINDOW = 5;
+const FORCE_SHEET_PIPELINE = true;
 const MIN_SLOT_COUNT = 1;
 const MAX_SLOT_COUNT = 7;
 const DEFAULT_SLOT_COUNT = 1;
@@ -401,6 +402,7 @@ async function mapSequential(items, mapper, spacingMs = 0) {
     return results;
 }
 function shouldUseRealtimeStream() {
+    if (FORCE_SHEET_PIPELINE) return false;
     return Boolean(appState.realtimeUrl.trim()) && appState.selectedDate === getTodayKstDate();
 }
 function createRealtimeStreamClient(baseUrl) {
@@ -615,10 +617,14 @@ function createGatewayAdapter(baseUrl) {
                 session: payload.session || 'open'
             };
         },
-        async syncSheetTargets(targets = []) {
+        async syncSheetTargets(targets = [], selectedDate = '', names = []) {
             const tickers = (targets || []).map((item) => String(item || '').trim()).filter(Boolean);
-            if (!tickers.length) return null;
-            return request('sheet-sync-targets', { tickers: tickers.join(',') });
+            const payload = {
+                tickers: tickers.join(','),
+                date: selectedDate,
+                names: (names || []).map((item) => String(item || '').trim()).filter(Boolean).join('|')
+            };
+            return request('sheet-sync-targets', payload);
         }
     };
 }
@@ -632,6 +638,7 @@ function getActiveAdapter() {
     return createGatewayAdapter(gatewayUrl);
 }
 function getRealtimeClient() {
+    if (FORCE_SHEET_PIPELINE) return null;
     const realtimeUrl = appState.realtimeUrl.trim();
     if (!realtimeUrl) return null;
     return createRealtimeStreamClient(realtimeUrl);
@@ -937,13 +944,15 @@ function renderSelectionNote(seriesCollection) {
     const dateNote = actualEnd && actualEnd !== appState.selectedDate
         ? `선택일 ${appState.selectedDate}이 거래일이 아니거나 장중이라 실제 월 계산은 ${actualEnd} 기준으로 맞췄습니다.`
         : `기준일 ${appState.selectedDate}이 속한 월의 거래일만 역순으로 보여줍니다.`;
-    const realtimeNote = appState.dataMode === 'gateway'
-        ? (appState.session === 'open'
-            ? (shouldUseRealtimeStream()
-                ? '장중에는 KIS 웹소켓 relay로 오늘 행을 바로 반영하고, relay가 끊기면 REST fallback으로 전환합니다.'
-                : '장중에는 KIS REST를 5초 간격으로 다시 불러오는 fallback 방식입니다.')
-            : '장 시작 전에는 오늘 행이 비고, 장이 열리면 오늘 등가률이 채워집니다.')
-        : '현재는 데모 데이터입니다. 실데이터를 쓰려면 config.js에 게이트웨이 URL을 넣어 주세요.';
+    const realtimeNote = FORCE_SHEET_PIPELINE
+        ? '현재는 SHEET 파이프라인 전용 모드입니다. 기준일/종목명을 티커로 변환해 시트 입력셀로 동기화한 뒤 시트 계산값만 읽어옵니다.'
+        : (appState.dataMode === 'gateway'
+            ? (appState.session === 'open'
+                ? (shouldUseRealtimeStream()
+                    ? '장중에는 KIS 웹소켓 relay로 오늘 행을 바로 반영하고, relay가 끊기면 REST fallback으로 전환합니다.'
+                    : '장중에는 KIS REST를 5초 간격으로 다시 불러오는 fallback 방식입니다.')
+                : '장 시작 전에는 오늘 행이 비고, 장이 열리면 오늘 등가률이 채워집니다.')
+            : '현재는 데모 데이터입니다. 실데이터를 쓰려면 config.js에 게이트웨이 URL을 넣어 주세요.');
     const unresolvedNote = unresolved.length
         ? `${unresolved.join(', ')}은 아직 종목 매칭이 되지 않아 빈 열로 남습니다.`
         : '입력한 종목은 이름이나 코드로 자동 연결됩니다.';
@@ -1030,7 +1039,8 @@ async function fetchSeriesCollection(adapter) {
     if (adapter?.syncSheetTargets) {
         try {
             const selectedCodes = appState.slots.map((slot) => slot?.stock?.code || '');
-            await adapter.syncSheetTargets(selectedCodes);
+            const selectedNames = appState.slots.map((slot) => slot?.stock?.name || slot?.query || '');
+            await adapter.syncSheetTargets(selectedCodes, appState.selectedDate, selectedNames);
         } catch (error) {
             console.warn('sheet-sync-targets failed', error);
         }
@@ -1044,9 +1054,9 @@ async function fetchSeriesCollection(adapter) {
         return { slotId: index, target, series, rows: [], liveSnapshot: null };
     }, GATEWAY_REQUEST_SPACING_MS);
     const holidaySet = new Set(seriesCollection.flatMap((item) => item.series?.holidays || []));
-    let session = resolveMarketSession(appState.selectedDate, holidaySet);
-    const shouldSkipInitialSnapshots = session === 'open' && shouldUseRealtimeStream();
-    if (['open', 'preopen', 'closed'].includes(session) && !shouldSkipInitialSnapshots) {
+    let session = FORCE_SHEET_PIPELINE ? 'historical' : resolveMarketSession(appState.selectedDate, holidaySet);
+    const shouldSkipInitialSnapshots = FORCE_SHEET_PIPELINE || (session === 'open' && shouldUseRealtimeStream());
+    if (!FORCE_SHEET_PIPELINE && ['open', 'preopen', 'closed'].includes(session) && !shouldSkipInitialSnapshots) {
         const snapshots = await mapSequential(seriesCollection, async (item) => (
             item.target ? adapter.loadIntraday(item.target, appState.selectedDate) : null
         ), GATEWAY_REQUEST_SPACING_MS);

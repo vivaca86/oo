@@ -11,7 +11,7 @@ It exposes eight GET actions:
 - `action=intraday-snapshot&ticker=005930&date=2026-04-09`
 - `action=index-month&indexCode=0001&date=2026-04-09`
 - `action=index-snapshot&indexCode=0001&date=2026-04-09`
-- `action=sheet-sync-targets&tickers=005930,000660,...` (SHEET 모드에서 B2/C2~I2 티커 동기화)
+- `action=sheet-sync-targets&date=2026-04-10&tickers=005930,000660,...&names=삼성전자|SK하이닉스|...` (SHEET 모드에서 A2 기준일 + B2/I2 티커 + J2/P2 종목명 동기화)
 
 `action=health` 응답에는 `gatewayVersion`, `healthSchemaVersion`, `dataSource`, `sheet`(연결된 스프레드시트 ID/시트명 디버그 정보)가 포함됩니다.
 
@@ -19,7 +19,7 @@ SHEET 모드 시트 값 파싱 참고:
 
 배포 검증 팁:
 - 최신 배포가 반영됐는지 확인하려면 `action=health`에서 `gatewayVersion` 값을 먼저 확인하세요.
-- 이 저장소 기준 최신 값은 `2026-04-10.1` 입니다.
+- 이 저장소 기준 최신 값은 `2026-04-10.2` 입니다.
 - 날짜 컬럼: `yyyy-mm-dd`, `yyyymmdd`, `mm-dd`, `mm/dd` 지원
 - 등가률 컬럼: `0.0306` 또는 `3.06%` 형식 모두 지원
 

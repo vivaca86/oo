@@ -69,6 +69,7 @@ Build a stock equal-rate web app that behaves like the user's Google Sheet model
 - Frontend logic already supports:
   - realtime relay via SSE when `realtimeUrl` exists
   - REST fallback if the relay is absent or fails
+- Frontend is now forced into a SHEET-first pipeline mode (`FORCE_SHEET_PIPELINE=true`): realtime/polling paths are bypassed and apply flow syncs selected date + names/tickers to sheet input cells before month reads.
 
 ## Important Technical Findings
 
@@ -126,15 +127,16 @@ On 2026-04-10 (Render production):
 
 The next agent should continue with these steps in order:
 
-1. Verify Apps Script `action=health` returns `gatewayVersion: 2026-04-10.1` from the active `/exec` URL.
-2. Verify GitHub Pages uses the latest `config.js` with relay URL:
+1. Verify Apps Script `action=health` returns `gatewayVersion: 2026-04-10.2` from the active `/exec` URL.
+2. Verify Apps Script `action=sheet-sync-targets` writes A2/B2~I2/J2~P2 correctly for selected date and slot names.
+3. Verify GitHub Pages uses the latest `config.js` with relay URL:
    - `realtimeUrl: https://oo-l347.onrender.com/stream`
-3. Verify the public site behavior during market hours:
+4. Verify the public site behavior during market hours:
    - site loads
    - today row updates from relay
    - relay failure triggers REST fallback
-4. Monitor Render free instance cold-start behavior and decide if paid upgrade is needed
-5. Keep `CODEX_CONTEXT.md` and `SESSION_LOG.md` updated after each verification session
+5. Monitor Render free instance cold-start behavior and decide if paid upgrade is needed
+6. Keep `CODEX_CONTEXT.md` and `SESSION_LOG.md` updated after each verification session
 
 ## If Continuing In Web Codex
 
