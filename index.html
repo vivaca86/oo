@@ -14,6 +14,16 @@
                     <label for="reference-date">기준일</label>
                     <input id="reference-date" type="date">
                 </div>
+                <div class="field">
+                    <label for="slot-count">종목 칸 수</label>
+                    <select id="slot-count">
+                        <option value="3">3칸</option>
+                        <option value="4">4칸</option>
+                        <option value="5">5칸</option>
+                        <option value="6">6칸</option>
+                        <option value="7">7칸</option>
+                    </select>
+                </div>
                 <div class="action-row">
                     <button class="btn-primary" id="apply-btn" type="button">조회</button>
                     <button class="btn-secondary" id="reset-btn" type="button">기본 종목</button>
@@ -35,7 +45,7 @@
                     <tbody id="table-body"></tbody>
                 </table>
             </div>
-            <div class="empty-state" id="empty-state">기준일과 종목을 불러오면 여기에 날짜 / KOSPI / 주식1~주식7 등가률 표가 표시됩니다.</div>
+            <div class="empty-state" id="empty-state">기준일과 종목을 불러오면 여기에 날짜 / KOSPI / 주식1~주식3 등가률 표가 표시됩니다.</div>
         </section>
     </div>
 
