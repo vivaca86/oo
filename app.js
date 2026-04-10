@@ -2,7 +2,7 @@ const MARKET_TIMEZONE = 'Asia/Seoul';
 const POLL_INTERVAL_MS = 5000;
 const STREAM_CONNECT_TIMEOUT_MS = 10000;
 const GATEWAY_REQUEST_SPACING_MS = 420;
-const SLOT_COUNT = 7;
+const SLOT_COUNT = 3;
 const STORAGE_GATEWAY = 'stock_eq_gateway_url';
 const STORAGE_LAST_DATE = 'stock_eq_last_date';
 const STORAGE_SLOTS = 'stock_eq_slots';
@@ -188,13 +188,33 @@ function buildCatalogDatalist() {
     )).join('');
 }
 function getSlotMetaText(slot) {
-    if (slot.stock) {
-        return `${slot.stock.name}`;
-    }
-    if (slot.query) {
-        return '';
-    }
-    return '';
+    if (!slot.stock) return '';
+    const summary = getMonthlyEqualRateSummary(slot.stock.code);
+    if (!summary) return '월별 등가률 합계 -';
+    return `월별 등가률 합계 (${summary.rangeLabel}) ${formatPercent(summary.totalEqualRate)}`;
+}
+function formatMonthDay(dateStr) {
+    const [, month, day] = String(dateStr || '').split('-');
+    if (!month || !day) return dateStr;
+    return `${Number(month)}/${Number(day)}`;
+}
+function getMonthlyEqualRateSummary(stockCode) {
+    const seriesItem = appState.seriesCollection.find((item) => item?.target?.code === stockCode);
+    const rows = Array.isArray(seriesItem?.rows) ? seriesItem.rows : [];
+    if (!rows.length) return null;
+    const monthStart = startOfMonth(appState.selectedDate || rows[0]?.date || '');
+    const monthRows = rows
+        .filter((row) => row?.date >= monthStart && Number.isFinite(Number(row?.equalRate)))
+        .sort((left, right) => left.date.localeCompare(right.date));
+    if (!monthRows.length) return null;
+    const totalFactor = monthRows.reduce((acc, row) => acc * (1 + Number(row.equalRate)), 1);
+    const totalEqualRate = totalFactor - 1;
+    return {
+        totalEqualRate,
+        startDate: monthRows[0].date,
+        endDate: monthRows[monthRows.length - 1].date,
+        rangeLabel: `${formatMonthDay(monthRows[0].date)}~${formatMonthDay(monthRows[monthRows.length - 1].date)}`
+    };
 }
 
 function getDemoStartingValue(target, dateStr) {
