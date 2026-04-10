@@ -151,3 +151,8 @@
 - Updated frontend `config.js` `gatewayUrl` to the new `/exec` URL.
 - Updated `CODEX_CONTEXT.md` public exec URL reference to match the redeploy.
 
+### Apps Script redeploy URL update (second)
+
+- User confirmed a newer Apps Script deploy URL and requested switching frontend gateway to that URL.
+- Updated `config.js` and `CODEX_CONTEXT.md` to the new `/exec` endpoint.
+
