@@ -53,6 +53,8 @@ function routeGatewayAction_(action, params) {
       return handleStockCatalog_(params);
     case 'stock-search':
       return handleStockSearch_(params);
+    case 'sheet-sync-targets':
+      return handleSheetSyncTargets_(params);
     case 'equity-month':
       return handleEquityMonth_(params);
     case 'index-month':
@@ -115,6 +117,10 @@ function handleStockSearch_(params) {
 function handleEquityMonth_(params) {
   var stock = resolveStock_(params.ticker || params.q || '');
   var selectedDate = coerceIsoDate_(params.date);
+  var slotNumber = Number(params.slot || 0);
+  if (isSheetDataSourceMode_()) {
+    return buildSheetMonthResponse_(stock, selectedDate, slotNumber);
+  }
   var monthStart = startOfMonthIso_(selectedDate);
   var holidays = getMonthlyHolidayDates_(selectedDate);
   var historyEndDate = resolveSeriesEndDate_(selectedDate, holidays);
@@ -139,6 +145,9 @@ function handleEquityMonth_(params) {
 function handleIndexMonth_(params) {
   var stock = resolveIndexBenchmark_(params.indexCode || params.q || '0001');
   var selectedDate = coerceIsoDate_(params.date);
+  if (isSheetDataSourceMode_()) {
+    return buildSheetMonthResponse_(stock, selectedDate, 0);
+  }
   var monthStart = startOfMonthIso_(selectedDate);
   var holidays = getMonthlyHolidayDates_(selectedDate);
   var historyEndDate = resolveSeriesEndDate_(selectedDate, holidays);
@@ -163,6 +172,18 @@ function handleIndexMonth_(params) {
 function handleIntradaySnapshot_(params) {
   var stock = resolveStock_(params.ticker || params.q || '');
   var selectedDate = coerceIsoDate_(params.date);
+  if (isSheetDataSourceMode_()) {
+    return {
+      ok: true,
+      date: selectedDate,
+      price: null,
+      prevClose: null,
+      equalRate: null,
+      asOf: formatKstTimestamp_(new Date()),
+      session: 'historical',
+      source: 'sheet'
+    };
+  }
   var holidays = getMonthlyHolidayDates_(selectedDate);
   var session = resolveGatewaySession_(selectedDate, holidays);
   var timestamp = formatKstTimestamp_(new Date());
@@ -227,6 +248,18 @@ function handleIntradaySnapshot_(params) {
 function handleIndexSnapshot_(params) {
   var stock = resolveIndexBenchmark_(params.indexCode || params.q || '0001');
   var selectedDate = coerceIsoDate_(params.date);
+  if (isSheetDataSourceMode_()) {
+    return {
+      ok: true,
+      date: selectedDate,
+      price: null,
+      prevClose: null,
+      equalRate: null,
+      asOf: formatKstTimestamp_(new Date()),
+      session: 'historical',
+      source: 'sheet'
+    };
+  }
   var holidays = getMonthlyHolidayDates_(selectedDate);
   var session = resolveGatewaySession_(selectedDate, holidays);
   var timestamp = formatKstTimestamp_(new Date());
@@ -297,6 +330,179 @@ function resolveIndexBenchmark_(input) {
     return { code: '2001', name: 'KOSPI200', market: 'INDEX', assetType: 'index' };
   }
   throw createHttpError_(400, '지원하지 않는 지수 코드입니다: ' + code);
+}
+
+function isSheetDataSourceMode_() {
+  return String(getSetting_('DATA_SOURCE', 'KIS')).trim().toUpperCase() === 'SHEET';
+}
+
+function handleSheetSyncTargets_(params) {
+  if (!isSheetDataSourceMode_()) {
+    return {
+      ok: true,
+      source: 'kis-open-api',
+      skipped: true
+    };
+  }
+
+  var rawTickers = String(params.tickers || '').trim();
+  var tickers = rawTickers ? rawTickers.split(',').map(function (value) {
+    return sanitizeStockCode_(value);
+  }) : [];
+
+  var sheet = getConfiguredSheet_();
+  var writeValues = [['0001']];
+  for (var i = 0; i < 7; i += 1) {
+    writeValues.push([tickers[i] || '']);
+  }
+  sheet.getRange(2, 2, 1, 8).setValues([[
+    writeValues[0][0],
+    writeValues[1][0],
+    writeValues[2][0],
+    writeValues[3][0],
+    writeValues[4][0],
+    writeValues[5][0],
+    writeValues[6][0],
+    writeValues[7][0]
+  ]]);
+
+  return {
+    ok: true,
+    source: 'sheet',
+    syncedTickers: tickers
+  };
+}
+
+function buildSheetMonthResponse_(stock, selectedDate, slotNumber) {
+  var monthStart = startOfMonthIso_(selectedDate);
+  var sheetSeries = loadSheetEqualRateSeries_(stock, selectedDate, slotNumber);
+  var partition = partitionMonthRows_(sheetSeries.rows, monthStart);
+  var limited = limitRecentTradingRowsWithBaseline_(partition.rows, partition.baselineDate, partition.baselineClose, STOCK_EQ_GATEWAY.tradingDayWindow);
+  var lastTradingDate = limited.rows.length ? limited.rows[limited.rows.length - 1].date : selectedDate;
+
+  return {
+    ok: true,
+    stock: stock,
+    selectedDate: selectedDate,
+    lastTradingDate: lastTradingDate,
+    baselineDate: limited.baselineDate,
+    baselineClose: limited.baselineClose,
+    rows: limited.rows,
+    holidays: [],
+    source: 'sheet'
+  };
+}
+
+function loadSheetEqualRateSeries_(stock, selectedDate, slotNumber) {
+  var sheet = getConfiguredSheet_();
+  var values = sheet.getDataRange().getValues();
+  if (!values || values.length < 2) {
+    throw createHttpError_(500, '스프레드시트 데이터가 비어 있습니다.');
+  }
+
+  var headers = values[0].map(function (value) { return String(value || '').trim(); });
+  var targetColumn = findSheetColumnIndexBySlot_(headers, stock, slotNumber);
+  if (targetColumn < 0) {
+    throw createHttpError_(400, '시트에서 종목 컬럼을 찾지 못했습니다: ' + (stock.name || stock.code));
+  }
+
+  var monthKey = selectedDate.slice(0, 7);
+  var equalRateRows = [];
+  for (var i = 1; i < values.length; i += 1) {
+    var row = values[i];
+    var dateIso = parseSheetDateToIso_(row[0]);
+    if (!dateIso || dateIso.slice(0, 7) !== monthKey || dateIso > selectedDate) continue;
+    var equalRate = toEqualRateNumber_(row[targetColumn]);
+    if (!isFiniteNumber_(equalRate)) continue;
+    equalRateRows.push({ date: dateIso, equalRate: equalRate });
+  }
+
+  equalRateRows.sort(function (left, right) {
+    return left.date.localeCompare(right.date);
+  });
+  if (!equalRateRows.length) {
+    return { rows: [] };
+  }
+
+  var rows = [];
+  var previousClose = 100;
+  for (var index = 0; index < equalRateRows.length; index += 1) {
+    var item = equalRateRows[index];
+    var close = roundNumber_(previousClose * (1 + item.equalRate), 8);
+    rows.push({
+      date: item.date,
+      close: close
+    });
+    previousClose = close;
+  }
+
+  return { rows: rows };
+}
+
+function findSheetColumnIndex_(headers, stock) {
+  return findSheetColumnIndexBySlot_(headers, stock, 0);
+}
+
+function findSheetColumnIndexBySlot_(headers, stock, slotNumber) {
+  var safeSlot = Number(slotNumber || 0);
+  if (safeSlot > 0) {
+    return Math.min(2 + (safeSlot - 1), headers.length - 1);
+  }
+  var normalizedHeaders = headers.map(function (header) { return normalizeSearchText_(header); });
+  var candidates = [];
+  if (String(stock.code || '') === '0001' || normalizeSearchText_(stock.name || '') === 'kospi') {
+    candidates.push('kospi');
+    candidates.push('지수');
+  } else {
+    candidates.push(normalizeSearchText_(stock.code || ''));
+    candidates.push(normalizeSearchText_(stock.name || ''));
+  }
+
+  for (var i = 1; i < normalizedHeaders.length; i += 1) {
+    for (var j = 0; j < candidates.length; j += 1) {
+      var keyword = candidates[j];
+      if (!keyword) continue;
+      if (normalizedHeaders[i] === keyword || normalizedHeaders[i].indexOf(keyword) >= 0) {
+        return i;
+      }
+    }
+  }
+  return -1;
+}
+
+function getConfiguredSheet_() {
+  var spreadsheetId = String(getSetting_('SHEET_SPREADSHEET_ID', '')).trim();
+  if (!spreadsheetId) {
+    throw createHttpError_(500, 'DATA_SOURCE=SHEET 인 경우 SHEET_SPREADSHEET_ID 를 설정해 주세요.');
+  }
+
+  var sheetName = String(getSetting_('SHEET_NAME', '')).trim();
+  var spreadsheet = SpreadsheetApp.openById(spreadsheetId);
+  var sheet = sheetName ? spreadsheet.getSheetByName(sheetName) : spreadsheet.getSheets()[0];
+  if (!sheet) {
+    throw createHttpError_(500, '설정한 SHEET_NAME 시트를 찾지 못했습니다.');
+  }
+  return sheet;
+}
+
+function parseSheetDateToIso_(value) {
+  if (Object.prototype.toString.call(value) === '[object Date]' && !isNaN(value.getTime())) {
+    return Utilities.formatDate(value, STOCK_EQ_GATEWAY.timezone, 'yyyy-MM-dd');
+  }
+  var raw = String(value || '').trim();
+  if (!raw) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  if (/^\d{8}$/.test(raw)) return basicToIso_(raw);
+  return null;
+}
+
+function toEqualRateNumber_(value) {
+  var parsed = toNumber_(value);
+  if (!isFiniteNumber_(parsed)) return null;
+  if (Math.abs(parsed) > 1) {
+    return parsed / 100;
+  }
+  return parsed;
 }
 
 function resolveStock_(input) {

@@ -39,7 +39,7 @@ Build a stock equal-rate web app that behaves like the user's Google Sheet model
 - Apps Script project:
   [project editor](https://script.google.com/home/projects/13aWS-lCZTa2Rii1DMy9y1DKZVsJ2pR6PabbM-9vj0puK4HCoQXT5j4Gd/edit)
 - Public exec URL:
-  `https://script.google.com/macros/s/AKfycbxcQXuOXziWYz7eltmG3dN6Pvu3fJWD2S1zakTehM_vA2ubyyIxLelEe6dneyWZi3H2/exec`
+  `https://script.google.com/macros/s/AKfycbw7aaWkdF1k-V21d2wRJVpnuYFdCl_U3xLdEyU3NFVYDSZl69AiNvL5rlMdq4dw81kzjg/exec`
 - Health was confirmed with `hasCredentials: true` on 2026-04-09 after the user added `KIS_APP_KEY` and `KIS_APP_SECRET`.
 
 ### Realtime relay
@@ -61,6 +61,8 @@ Build a stock equal-rate web app that behaves like the user's Google Sheet model
 - Realtime relay is deployed on Render: `https://oo-l347.onrender.com`.
 - Stock slot UI now starts at 1 slot but supports user-adjustable range 1~7 from the page control.
 - Month-series UI is currently narrowed to the most recent 5 trading days (easy to restore by changing the configured window constants).
+- Gateway supports a `DATA_SOURCE=SHEET` mode to read equal-rate rows from a Google Spreadsheet instead of KIS API calls.
+- In `DATA_SOURCE=SHEET`, frontend can call `sheet-sync-targets` to push selected tickers into sheet input cells before month reads.
 - Frontend logic already supports:
   - realtime relay via SSE when `realtimeUrl` exists
   - REST fallback if the relay is absent or fails

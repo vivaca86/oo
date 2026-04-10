@@ -134,3 +134,20 @@
 - User still reported rate-limit failures even at 2 slots / 5-day mode.
 - Added script-level KIS request spacing (`kisMinIntervalMs`) with lock+property timestamp so concurrent executions do not burst-request KIS.
 - Added rate-limit-aware retry delays (`kisRetryDelaysMs`) for KIS GET calls.
+
+### Spreadsheet data-source fallback mode
+
+- User indicated KIS API path is still unreliable and requested switching to spreadsheet-driven values.
+- Added `DATA_SOURCE=SHEET` mode in Apps Script gateway.
+- Added script property support:
+  - `SHEET_SPREADSHEET_ID` (required in SHEET mode)
+  - `SHEET_NAME` (optional, defaults to first sheet)
+- In SHEET mode, month handlers now read date + target column equal-rate values from sheet and build response rows without KIS calls.
+- Added `sheet-sync-targets` action so frontend-selected stock tickers can be written to `B2/C2~I2` flow before reading sheet-driven equal rates.
+
+### Apps Script redeploy URL update
+
+- User provided a newly deployed Apps Script web-app URL.
+- Updated frontend `config.js` `gatewayUrl` to the new `/exec` URL.
+- Updated `CODEX_CONTEXT.md` public exec URL reference to match the redeploy.
+

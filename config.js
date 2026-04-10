@@ -1,4 +1,4 @@
 window.STOCK_LAB_CONFIG = {
-    gatewayUrl: "https://script.google.com/macros/s/AKfycbxcQXuOXziWYz7eltmG3dN6Pvu3fJWD2S1zakTehM_vA2ubyyIxLelEe6dneyWZi3H2/exec",
+    gatewayUrl: "https://script.google.com/macros/s/AKfycbw7aaWkdF1k-V21d2wRJVpnuYFdCl_U3xLdEyU3NFVYDSZl69AiNvL5rlMdq4dw81kzjg/exec",
     realtimeUrl: "https://oo-l347.onrender.com/stream"
 };
