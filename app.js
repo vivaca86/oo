@@ -4,6 +4,7 @@ const STREAM_CONNECT_TIMEOUT_MS = 10000;
 const GATEWAY_REQUEST_SPACING_MS = 420;
 const GATEWAY_MIN_INTERVAL_MS = 700;
 const GATEWAY_RETRY_DELAYS_MS = [900, 1600, 2400];
+const DISPLAY_TRADING_DAY_WINDOW = 5;
 const MIN_SLOT_COUNT = 1;
 const MAX_SLOT_COUNT = 7;
 const DEFAULT_SLOT_COUNT = 1;
@@ -225,13 +226,13 @@ function buildCatalogDatalist() {
 function getSlotMetaText(slot) {
     if (!slot.stock) return '';
     const summary = getMonthlyEqualRateSummary(slot.stock.code);
-    if (!summary) return '월별 등가률 합계 -';
-    return `월별 등가률 합계 (${summary.rangeLabel}) ${formatPercent(summary.totalEqualRate)}`;
+    if (!summary) return `최근 ${DISPLAY_TRADING_DAY_WINDOW}영업일 등가률 합계 -`;
+    return `최근 ${DISPLAY_TRADING_DAY_WINDOW}영업일 등가률 합계 (${summary.rangeLabel}) ${formatPercent(summary.totalEqualRate)}`;
 }
 function getKospiMetaText() {
     const summary = getMonthlyEqualRateSummary(KOSPI_BENCHMARK.code);
-    if (!summary) return '월별 등가률 합계 -';
-    return `월별 등가률 합계 (${summary.rangeLabel}) ${formatPercent(summary.totalEqualRate)}`;
+    if (!summary) return `최근 ${DISPLAY_TRADING_DAY_WINDOW}영업일 등가률 합계 -`;
+    return `최근 ${DISPLAY_TRADING_DAY_WINDOW}영업일 등가률 합계 (${summary.rangeLabel}) ${formatPercent(summary.totalEqualRate)}`;
 }
 function formatMonthDay(dateStr) {
     const [, month, day] = String(dateStr || '').split('-');
@@ -242,18 +243,18 @@ function getMonthlyEqualRateSummary(stockCode) {
     const seriesItem = appState.seriesCollection.find((item) => item?.target?.code === stockCode);
     const rows = Array.isArray(seriesItem?.rows) ? seriesItem.rows : [];
     if (!rows.length) return null;
-    const monthStart = startOfMonth(appState.selectedDate || rows[0]?.date || '');
-    const monthRows = rows
-        .filter((row) => row?.date >= monthStart && Number.isFinite(Number(row?.equalRate)))
+    const windowRows = rows
+        .filter((row) => Number.isFinite(Number(row?.equalRate)))
         .sort((left, right) => left.date.localeCompare(right.date));
-    if (!monthRows.length) return null;
-    const totalFactor = monthRows.reduce((acc, row) => acc * (1 + Number(row.equalRate)), 1);
+    if (!windowRows.length) return null;
+    const limitedRows = windowRows.slice(-1 * DISPLAY_TRADING_DAY_WINDOW);
+    const totalFactor = limitedRows.reduce((acc, row) => acc * (1 + Number(row.equalRate)), 1);
     const totalEqualRate = totalFactor - 1;
     return {
         totalEqualRate,
-        startDate: monthRows[0].date,
-        endDate: monthRows[monthRows.length - 1].date,
-        rangeLabel: `${formatMonthDay(monthRows[0].date)}~${formatMonthDay(monthRows[monthRows.length - 1].date)}`
+        startDate: limitedRows[0].date,
+        endDate: limitedRows[limitedRows.length - 1].date,
+        rangeLabel: `${formatMonthDay(limitedRows[0].date)}~${formatMonthDay(limitedRows[limitedRows.length - 1].date)}`
     };
 }
 
@@ -942,7 +943,7 @@ function renderSelectionNote(seriesCollection) {
         ? `${unresolved.join(', ')}은 아직 종목 매칭이 되지 않아 빈 열로 남습니다.`
         : '입력한 종목은 이름이나 코드로 자동 연결됩니다.';
     const slotNote = appState.slots.map((slot) => `주식${slot.id} ${slot.stock ? slot.stock.name : '비어 있음'}`).join(' / ');
-    noteEl.innerHTML = `<strong>표 규칙</strong> · 각 칸은 일별 등가률만 표시합니다. 월 첫 거래일은 전월 마지막 거래일 종가 기준으로 계산합니다.<br>${dateNote}<br>${realtimeNote}<br>${unresolvedNote}<br>KOSPI / ${slotNote}`;
+    noteEl.innerHTML = `<strong>표 규칙</strong> · 각 칸은 최근 ${DISPLAY_TRADING_DAY_WINDOW}영업일의 일별 등가률을 표시합니다. 첫 표시일은 직전 거래일 종가를 기준으로 계산합니다.<br>${dateNote}<br>${realtimeNote}<br>${unresolvedNote}<br>KOSPI / ${slotNote}`;
 }
 function buildMatrixRows(seriesCollection, session) {
     const usable = seriesCollection.map((item) => ({
@@ -1093,7 +1094,7 @@ async function loadAndRender() {
         renderTableHead();
         renderLiveState();
         const actualEnd = getActualEndDate(appState.seriesCollection) || appState.selectedDate;
-        getEl('table-description').textContent = `${startOfMonth(actualEnd)}부터 ${actualEnd}까지 거래일만 역순으로 보여줍니다. 각 칸은 일별 등가률입니다.`;
+        getEl('table-description').textContent = `최근 ${DISPLAY_TRADING_DAY_WINDOW}영업일(최신일 ${actualEnd})만 역순으로 보여줍니다. 각 칸은 일별 등가률입니다.`;
         if (appState.session === 'open') {
             startRealtimeStreamOrPolling();
         }
