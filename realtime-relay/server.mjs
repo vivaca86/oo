@@ -278,8 +278,9 @@ async function openKisRealtimeStream({ codes, selectedDate, onSnapshot, onError,
 
 const server = http.createServer(async (request, response) => {
     const requestUrl = new URL(request.url || '/', `http://${request.headers.host || 'localhost'}`);
+    const pathname = requestUrl.pathname.replace(/\/+$/, '') || '/';
 
-    if (requestUrl.pathname === '/health') {
+    if (pathname === '/' || pathname === '/health') {
         sendJson(response, 200, {
             ok: true,
             service: 'stock-lab-realtime-relay',
@@ -290,7 +291,7 @@ const server = http.createServer(async (request, response) => {
         return;
     }
 
-    if (requestUrl.pathname !== '/stream') {
+    if (pathname !== '/stream') {
         sendJson(response, 404, {
             ok: false,
             error: '지원하지 않는 경로입니다.'

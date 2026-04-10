@@ -2,10 +2,17 @@ const MARKET_TIMEZONE = 'Asia/Seoul';
 const POLL_INTERVAL_MS = 5000;
 const STREAM_CONNECT_TIMEOUT_MS = 10000;
 const GATEWAY_REQUEST_SPACING_MS = 420;
-const SLOT_COUNT = 7;
+const GATEWAY_MIN_INTERVAL_MS = 700;
+const GATEWAY_RETRY_DELAYS_MS = [900, 1600, 2400];
+const DISPLAY_TRADING_DAY_WINDOW = 5;
+const FORCE_SHEET_PIPELINE = true;
+const MIN_SLOT_COUNT = 1;
+const MAX_SLOT_COUNT = 7;
+const DEFAULT_SLOT_COUNT = 1;
 const STORAGE_GATEWAY = 'stock_eq_gateway_url';
 const STORAGE_LAST_DATE = 'stock_eq_last_date';
 const STORAGE_SLOTS = 'stock_eq_slots';
+const STORAGE_SLOT_COUNT = 'stock_eq_slot_count';
 const DEFAULT_GATEWAY = String(window.STOCK_LAB_CONFIG?.gatewayUrl || '');
 const DEFAULT_REALTIME_URL = String(window.STOCK_LAB_CONFIG?.realtimeUrl || '');
 const KOSPI_BENCHMARK = { code: '0001', name: 'KOSPI', market: 'INDEX', assetType: 'index', sector: '국내 대표 지수', area: '유가증권시장 전체 흐름' };
@@ -39,6 +46,7 @@ const appState = {
     selectedDate: '',
     gatewayUrl: '',
     realtimeUrl: '',
+    slotCount: DEFAULT_SLOT_COUNT,
     slots: [],
     catalog: [...STOCK_CATALOG],
     dataMode: 'demo',
@@ -72,6 +80,11 @@ function formatDateLabel(dateStr) {
 }
 function waitMs(ms) {
     return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+function isGatewayRateLimitErrorMessage(message) {
+    const normalized = String(message || '').toLowerCase();
+    if (!normalized) return false;
+    return normalized.includes('초당 거래건수') || normalized.includes('rate limit') || normalized.includes('too many');
 }
 function getTodayKstDate() {
     const parts = new Intl.DateTimeFormat('en-CA', {
@@ -160,7 +173,31 @@ function escapeHtml(value) {
         .replace(/'/g, '&#39;');
 }
 function createDefaultSlots() {
-    return Array.from({ length: SLOT_COUNT }, (_, index) => {
+    return Array.from({ length: appState.slotCount }, (_, index) => {
+        const defaultCode = DEFAULT_SLOT_CODES[index] || '';
+        const defaultStock = STOCK_CATALOG.find((item) => item.code === defaultCode) || null;
+        return {
+            id: index + 1,
+            query: defaultStock ? defaultStock.name : '',
+            stock: defaultStock
+        };
+    });
+}
+function normalizeSlotCount(rawCount) {
+    const parsed = Number(rawCount);
+    if (!Number.isFinite(parsed)) return DEFAULT_SLOT_COUNT;
+    return Math.max(MIN_SLOT_COUNT, Math.min(MAX_SLOT_COUNT, Math.trunc(parsed)));
+}
+function buildSlotsForCount(nextCount, previousSlots = []) {
+    return Array.from({ length: nextCount }, (_, index) => {
+        const existing = previousSlots[index];
+        if (existing) {
+            return {
+                id: index + 1,
+                query: String(existing.query || ''),
+                stock: existing.stock ? enrichStockMeta(existing.stock) : null
+            };
+        }
         const defaultCode = DEFAULT_SLOT_CODES[index] || '';
         const defaultStock = STOCK_CATALOG.find((item) => item.code === defaultCode) || null;
         return {
@@ -188,13 +225,38 @@ function buildCatalogDatalist() {
     )).join('');
 }
 function getSlotMetaText(slot) {
-    if (slot.stock) {
-        return `${slot.stock.name}`;
-    }
-    if (slot.query) {
-        return '';
-    }
-    return '';
+    if (!slot.stock) return '';
+    const summary = getMonthlyEqualRateSummary(slot.stock.code);
+    if (!summary) return `최근 ${DISPLAY_TRADING_DAY_WINDOW}영업일 등가률 합계 -`;
+    return `최근 ${DISPLAY_TRADING_DAY_WINDOW}영업일 등가률 합계 (${summary.rangeLabel}) ${formatPercent(summary.totalEqualRate)}`;
+}
+function getKospiMetaText() {
+    const summary = getMonthlyEqualRateSummary(KOSPI_BENCHMARK.code);
+    if (!summary) return `최근 ${DISPLAY_TRADING_DAY_WINDOW}영업일 등가률 합계 -`;
+    return `최근 ${DISPLAY_TRADING_DAY_WINDOW}영업일 등가률 합계 (${summary.rangeLabel}) ${formatPercent(summary.totalEqualRate)}`;
+}
+function formatMonthDay(dateStr) {
+    const [, month, day] = String(dateStr || '').split('-');
+    if (!month || !day) return dateStr;
+    return `${Number(month)}/${Number(day)}`;
+}
+function getMonthlyEqualRateSummary(stockCode) {
+    const seriesItem = appState.seriesCollection.find((item) => item?.target?.code === stockCode);
+    const rows = Array.isArray(seriesItem?.rows) ? seriesItem.rows : [];
+    if (!rows.length) return null;
+    const windowRows = rows
+        .filter((row) => Number.isFinite(Number(row?.equalRate)))
+        .sort((left, right) => left.date.localeCompare(right.date));
+    if (!windowRows.length) return null;
+    const limitedRows = windowRows.slice(-1 * DISPLAY_TRADING_DAY_WINDOW);
+    const totalFactor = limitedRows.reduce((acc, row) => acc * (1 + Number(row.equalRate)), 1);
+    const totalEqualRate = totalFactor - 1;
+    return {
+        totalEqualRate,
+        startDate: limitedRows[0].date,
+        endDate: limitedRows[limitedRows.length - 1].date,
+        rangeLabel: `${formatMonthDay(limitedRows[0].date)}~${formatMonthDay(limitedRows[limitedRows.length - 1].date)}`
+    };
 }
 
 function getDemoStartingValue(target, dateStr) {
@@ -340,6 +402,7 @@ async function mapSequential(items, mapper, spacingMs = 0) {
     return results;
 }
 function shouldUseRealtimeStream() {
+    if (FORCE_SHEET_PIPELINE) return false;
     return Boolean(appState.realtimeUrl.trim()) && appState.selectedDate === getTodayKstDate();
 }
 function createRealtimeStreamClient(baseUrl) {
@@ -462,6 +525,15 @@ function createMockAdapter() {
 }
 function createGatewayAdapter(baseUrl) {
     if (!baseUrl) return null;
+    let lastRequestAt = 0;
+    async function waitForGatewayTurn() {
+        const elapsed = Date.now() - lastRequestAt;
+        const waitNeeded = Math.max(0, GATEWAY_MIN_INTERVAL_MS - elapsed);
+        if (waitNeeded > 0) {
+            await waitMs(waitNeeded);
+        }
+        lastRequestAt = Date.now();
+    }
     async function request(action, params = {}) {
         const url = new URL(baseUrl);
         url.searchParams.set('action', action);
@@ -470,11 +542,34 @@ function createGatewayAdapter(baseUrl) {
                 url.searchParams.set(key, value);
             }
         });
-        const response = await fetch(url.toString(), { headers: { Accept: 'application/json' } });
-        if (!response.ok) throw new Error(`Gateway HTTP ${response.status}`);
-        const payload = await response.json();
-        if (payload && payload.ok === false) throw new Error(payload?.error?.message || 'Gateway error');
-        return payload;
+        let attempt = 0;
+        while (true) {
+            try {
+                await waitForGatewayTurn();
+                const response = await fetch(url.toString(), { headers: { Accept: 'application/json' } });
+                const rawText = await response.text();
+                let payload = null;
+                try {
+                    payload = rawText ? JSON.parse(rawText) : null;
+                } catch (_) {
+                    payload = null;
+                }
+                if (!response.ok) {
+                    throw new Error(payload?.error?.message || payload?.message || `Gateway HTTP ${response.status}`);
+                }
+                if (payload && payload.ok === false) {
+                    throw new Error(payload?.error?.message || payload?.message || 'Gateway error');
+                }
+                return payload;
+            } catch (error) {
+                if (!isGatewayRateLimitErrorMessage(error?.message) || attempt >= GATEWAY_RETRY_DELAYS_MS.length) {
+                    throw error;
+                }
+                const retryDelay = GATEWAY_RETRY_DELAYS_MS[attempt];
+                attempt += 1;
+                await waitMs(retryDelay);
+            }
+        }
     }
     return {
         async loadCatalog(market = 'KOSPI') {
@@ -485,13 +580,13 @@ function createGatewayAdapter(baseUrl) {
             const payload = await request('stock-search', { q: query });
             return Array.isArray(payload?.items) ? payload.items.map(enrichStockMeta) : [];
         },
-        async loadSeries(target, selectedDate) {
+        async loadSeries(target, selectedDate, slotId = null) {
             const action = target.assetType === 'index' ? 'index-month' : 'equity-month';
             const payload = await request(
                 action,
                 target.assetType === 'index'
                     ? { indexCode: target.code, date: selectedDate }
-                    : { ticker: target.code, date: selectedDate }
+                    : { ticker: target.code, date: selectedDate, slot: slotId }
             );
             return {
                 stock: enrichStockMeta(payload?.stock || target),
@@ -521,6 +616,15 @@ function createGatewayAdapter(baseUrl) {
                 asOf: payload.asOf || '',
                 session: payload.session || 'open'
             };
+        },
+        async syncSheetTargets(targets = [], selectedDate = '', names = []) {
+            const tickers = (targets || []).map((item) => String(item || '').trim()).filter(Boolean);
+            const payload = {
+                tickers: tickers.join(','),
+                date: selectedDate,
+                names: (names || []).map((item) => String(item || '').trim()).filter(Boolean).join('|')
+            };
+            return request('sheet-sync-targets', payload);
         }
     };
 }
@@ -534,6 +638,7 @@ function getActiveAdapter() {
     return createGatewayAdapter(gatewayUrl);
 }
 function getRealtimeClient() {
+    if (FORCE_SHEET_PIPELINE) return null;
     const realtimeUrl = appState.realtimeUrl.trim();
     if (!realtimeUrl) return null;
     return createRealtimeStreamClient(realtimeUrl);
@@ -640,6 +745,19 @@ function persistSlots() {
         query: slot.query,
         stock: slot.stock
     }))));
+}
+function persistSlotCount() {
+    localStorage.setItem(STORAGE_SLOT_COUNT, String(appState.slotCount));
+}
+function syncSlotCountInput() {
+    const slotCountEl = getEl('slot-count');
+    if (!slotCountEl) return;
+    slotCountEl.value = String(appState.slotCount);
+}
+function updateEmptyStateCopy() {
+    const emptyEl = getEl('empty-state');
+    if (!emptyEl) return;
+    emptyEl.textContent = `기준일과 종목을 불러오면 여기에 날짜 / KOSPI / 주식1~주식${appState.slotCount} 등가률 표가 표시됩니다.`;
 }
 function readSlotInputsIntoState() {
     appState.slots = appState.slots.map((slot) => {
@@ -826,18 +944,20 @@ function renderSelectionNote(seriesCollection) {
     const dateNote = actualEnd && actualEnd !== appState.selectedDate
         ? `선택일 ${appState.selectedDate}이 거래일이 아니거나 장중이라 실제 월 계산은 ${actualEnd} 기준으로 맞췄습니다.`
         : `기준일 ${appState.selectedDate}이 속한 월의 거래일만 역순으로 보여줍니다.`;
-    const realtimeNote = appState.dataMode === 'gateway'
-        ? (appState.session === 'open'
-            ? (shouldUseRealtimeStream()
-                ? '장중에는 KIS 웹소켓 relay로 오늘 행을 바로 반영하고, relay가 끊기면 REST fallback으로 전환합니다.'
-                : '장중에는 KIS REST를 5초 간격으로 다시 불러오는 fallback 방식입니다.')
-            : '장 시작 전에는 오늘 행이 비고, 장이 열리면 오늘 등가률이 채워집니다.')
-        : '현재는 데모 데이터입니다. 실데이터를 쓰려면 config.js에 게이트웨이 URL을 넣어 주세요.';
+    const realtimeNote = FORCE_SHEET_PIPELINE
+        ? '현재는 SHEET 파이프라인 전용 모드입니다. 기준일/종목명을 티커로 변환해 시트 입력셀로 동기화한 뒤 시트 계산값만 읽어옵니다.'
+        : (appState.dataMode === 'gateway'
+            ? (appState.session === 'open'
+                ? (shouldUseRealtimeStream()
+                    ? '장중에는 KIS 웹소켓 relay로 오늘 행을 바로 반영하고, relay가 끊기면 REST fallback으로 전환합니다.'
+                    : '장중에는 KIS REST를 5초 간격으로 다시 불러오는 fallback 방식입니다.')
+                : '장 시작 전에는 오늘 행이 비고, 장이 열리면 오늘 등가률이 채워집니다.')
+            : '현재는 데모 데이터입니다. 실데이터를 쓰려면 config.js에 게이트웨이 URL을 넣어 주세요.');
     const unresolvedNote = unresolved.length
         ? `${unresolved.join(', ')}은 아직 종목 매칭이 되지 않아 빈 열로 남습니다.`
         : '입력한 종목은 이름이나 코드로 자동 연결됩니다.';
     const slotNote = appState.slots.map((slot) => `주식${slot.id} ${slot.stock ? slot.stock.name : '비어 있음'}`).join(' / ');
-    noteEl.innerHTML = `<strong>표 규칙</strong> · 각 칸은 일별 등가률만 표시합니다. 월 첫 거래일은 전월 마지막 거래일 종가 기준으로 계산합니다.<br>${dateNote}<br>${realtimeNote}<br>${unresolvedNote}<br>KOSPI / ${slotNote}`;
+    noteEl.innerHTML = `<strong>표 규칙</strong> · 각 칸은 최근 ${DISPLAY_TRADING_DAY_WINDOW}영업일의 일별 등가률을 표시합니다. 첫 표시일은 직전 거래일 종가를 기준으로 계산합니다.<br>${dateNote}<br>${realtimeNote}<br>${unresolvedNote}<br>KOSPI / ${slotNote}`;
 }
 function buildMatrixRows(seriesCollection, session) {
     const usable = seriesCollection.map((item) => ({
@@ -863,6 +983,7 @@ function buildMatrixRows(seriesCollection, session) {
     });
 }
 function renderTableHead() {
+    const kospiMetaText = getKospiMetaText();
     const slotInputs = appState.slots.map((slot) => `
         <th>
             <div class="table-slot-control">
@@ -882,10 +1003,16 @@ function renderTableHead() {
     getEl('table-head').innerHTML = `
         <tr class="input-row">
             <th></th>
-            <th><div class="table-fixed-note"><strong>KOSPI</strong></div></th>
+            <th>
+                <div class="table-fixed-note">
+                    <strong>KOSPI</strong>
+                    <span>${escapeHtml(kospiMetaText)}</span>
+                </div>
+            </th>
             ${slotInputs}
         </tr>
     `;
+    updateEmptyStateCopy();
 }
 function renderTable(matrixRows) {
     const body = getEl('table-body');
@@ -909,18 +1036,27 @@ function renderTable(matrixRows) {
 }
 
 async function fetchSeriesCollection(adapter) {
+    if (adapter?.syncSheetTargets) {
+        try {
+            const selectedCodes = appState.slots.map((slot) => slot?.stock?.code || '');
+            const selectedNames = appState.slots.map((slot) => slot?.stock?.name || slot?.query || '');
+            await adapter.syncSheetTargets(selectedCodes, appState.selectedDate, selectedNames);
+        } catch (error) {
+            console.warn('sheet-sync-targets failed', error);
+        }
+    }
     const targets = [KOSPI_BENCHMARK, ...appState.slots.map((slot) => slot.stock)];
     const seriesCollection = await mapSequential(targets, async (target, index) => {
         if (!target) {
             return { slotId: index, target: null, series: null, rows: [], liveSnapshot: null };
         }
-        const series = await adapter.loadSeries(target, appState.selectedDate);
+        const series = await adapter.loadSeries(target, appState.selectedDate, index);
         return { slotId: index, target, series, rows: [], liveSnapshot: null };
     }, GATEWAY_REQUEST_SPACING_MS);
     const holidaySet = new Set(seriesCollection.flatMap((item) => item.series?.holidays || []));
-    let session = resolveMarketSession(appState.selectedDate, holidaySet);
-    const shouldSkipInitialSnapshots = session === 'open' && shouldUseRealtimeStream();
-    if (['open', 'preopen', 'closed'].includes(session) && !shouldSkipInitialSnapshots) {
+    let session = FORCE_SHEET_PIPELINE ? 'historical' : resolveMarketSession(appState.selectedDate, holidaySet);
+    const shouldSkipInitialSnapshots = FORCE_SHEET_PIPELINE || (session === 'open' && shouldUseRealtimeStream());
+    if (!FORCE_SHEET_PIPELINE && ['open', 'preopen', 'closed'].includes(session) && !shouldSkipInitialSnapshots) {
         const snapshots = await mapSequential(seriesCollection, async (item) => (
             item.target ? adapter.loadIntraday(item.target, appState.selectedDate) : null
         ), GATEWAY_REQUEST_SPACING_MS);
@@ -981,7 +1117,7 @@ async function loadAndRender() {
         renderTableHead();
         renderLiveState();
         const actualEnd = getActualEndDate(appState.seriesCollection) || appState.selectedDate;
-        getEl('table-description').textContent = `${startOfMonth(actualEnd)}부터 ${actualEnd}까지 거래일만 역순으로 보여줍니다. 각 칸은 일별 등가률입니다.`;
+        getEl('table-description').textContent = `최근 ${DISPLAY_TRADING_DAY_WINDOW}영업일(최신일 ${actualEnd})만 역순으로 보여줍니다. 각 칸은 일별 등가률입니다.`;
         if (appState.session === 'open') {
             startRealtimeStreamOrPolling();
         }
@@ -1037,6 +1173,17 @@ function bindEvents() {
         persistSlots();
         await loadAndRender();
     });
+    getEl('slot-count').addEventListener('change', async (event) => {
+        const nextCount = normalizeSlotCount(event.target.value);
+        if (nextCount === appState.slotCount) return;
+        appState.slotCount = nextCount;
+        appState.slots = buildSlotsForCount(nextCount, appState.slots);
+        persistSlotCount();
+        persistSlots();
+        syncSlotCountInput();
+        renderTableHead();
+        await loadAndRender();
+    });
     getEl('reference-date').addEventListener('change', async (event) => {
         appState.selectedDate = event.target.value;
         localStorage.setItem(STORAGE_LAST_DATE, appState.selectedDate);
@@ -1061,6 +1208,7 @@ function restoreState() {
     appState.selectedDate = localStorage.getItem(STORAGE_LAST_DATE) || today;
     appState.gatewayUrl = localStorage.getItem(STORAGE_GATEWAY) || DEFAULT_GATEWAY;
     appState.realtimeUrl = DEFAULT_REALTIME_URL;
+    appState.slotCount = normalizeSlotCount(localStorage.getItem(STORAGE_SLOT_COUNT) || DEFAULT_SLOT_COUNT);
     getEl('reference-date').value = appState.selectedDate;
     getEl('reference-date').max = today;
     const savedSlots = localStorage.getItem(STORAGE_SLOTS);
@@ -1068,14 +1216,7 @@ function restoreState() {
         try {
             const parsed = JSON.parse(savedSlots);
             if (Array.isArray(parsed) && parsed.length) {
-                appState.slots = Array.from({ length: SLOT_COUNT }, (_, index) => {
-                    const raw = parsed[index] || {};
-                    return {
-                        id: index + 1,
-                        query: String(raw.query || ''),
-                        stock: raw.stock ? enrichStockMeta(raw.stock) : null
-                    };
-                });
+                appState.slots = buildSlotsForCount(appState.slotCount, parsed);
             }
         } catch (error) {
             console.warn('failed to restore slots', error);
@@ -1087,6 +1228,7 @@ function restoreState() {
 }
 async function init() {
     restoreState();
+    syncSlotCountInput();
     await ensureCatalogLoaded();
     renderStatusStrips();
     renderSelectionNote([]);
