@@ -2,7 +2,7 @@
 
 `stock-eq-gateway.gs` is an Apps Script web app backend for [index.html](/C:/Users/vivac/OneDrive/문서/aa/stock-lab/index.html).
 
-It exposes seven GET actions:
+It exposes eight GET actions:
 
 - `action=health`
 - `action=stock-catalog&market=KOSPI`
@@ -11,6 +11,13 @@ It exposes seven GET actions:
 - `action=intraday-snapshot&ticker=005930&date=2026-04-09`
 - `action=index-month&indexCode=0001&date=2026-04-09`
 - `action=index-snapshot&indexCode=0001&date=2026-04-09`
+- `action=sheet-sync-targets&tickers=005930,000660,...` (SHEET 모드에서 B2/C2~I2 티커 동기화)
+
+`action=health` 응답에는 `dataSource` 및 `sheet`(연결된 스프레드시트 ID/시트명 디버그 정보)가 포함됩니다.
+
+SHEET 모드 시트 값 파싱 참고:
+- 날짜 컬럼: `yyyy-mm-dd`, `yyyymmdd`, `mm-dd`, `mm/dd` 지원
+- 등가률 컬럼: `0.0306` 또는 `3.06%` 형식 모두 지원
 
 ## What It Does
 
@@ -31,6 +38,9 @@ Set these in Apps Script under `Project Settings -> Script Properties`.
 - `KIS_BASE_URL`: optional, default `https://openapi.koreainvestment.com:9443`
 - `KIS_MARKET_DIV`: optional, default `J`
 - `KIS_ORG_ADJ_PRC`: optional, default `1`
+- `DATA_SOURCE`: optional, default `KIS` (`SHEET`로 설정하면 스프레드시트 값 사용)
+- `SHEET_SPREADSHEET_ID`: `DATA_SOURCE=SHEET`일 때 필수
+- `SHEET_NAME`: `DATA_SOURCE=SHEET`일 때 선택(비우면 첫 번째 시트 사용)
 
 ## Deploy
 
