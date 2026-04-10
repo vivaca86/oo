@@ -4,9 +4,9 @@ const STREAM_CONNECT_TIMEOUT_MS = 10000;
 const GATEWAY_REQUEST_SPACING_MS = 420;
 const GATEWAY_MIN_INTERVAL_MS = 700;
 const GATEWAY_RETRY_DELAYS_MS = [900, 1600, 2400];
-const MIN_SLOT_COUNT = 3;
+const MIN_SLOT_COUNT = 1;
 const MAX_SLOT_COUNT = 7;
-const DEFAULT_SLOT_COUNT = 3;
+const DEFAULT_SLOT_COUNT = 1;
 const STORAGE_GATEWAY = 'stock_eq_gateway_url';
 const STORAGE_LAST_DATE = 'stock_eq_last_date';
 const STORAGE_SLOTS = 'stock_eq_slots';
@@ -225,6 +225,11 @@ function buildCatalogDatalist() {
 function getSlotMetaText(slot) {
     if (!slot.stock) return '';
     const summary = getMonthlyEqualRateSummary(slot.stock.code);
+    if (!summary) return '월별 등가률 합계 -';
+    return `월별 등가률 합계 (${summary.rangeLabel}) ${formatPercent(summary.totalEqualRate)}`;
+}
+function getKospiMetaText() {
+    const summary = getMonthlyEqualRateSummary(KOSPI_BENCHMARK.code);
     if (!summary) return '월별 등가률 합계 -';
     return `월별 등가률 합계 (${summary.rangeLabel}) ${formatPercent(summary.totalEqualRate)}`;
 }
@@ -963,6 +968,7 @@ function buildMatrixRows(seriesCollection, session) {
     });
 }
 function renderTableHead() {
+    const kospiMetaText = getKospiMetaText();
     const slotInputs = appState.slots.map((slot) => `
         <th>
             <div class="table-slot-control">
@@ -982,7 +988,12 @@ function renderTableHead() {
     getEl('table-head').innerHTML = `
         <tr class="input-row">
             <th></th>
-            <th><div class="table-fixed-note"><strong>KOSPI</strong></div></th>
+            <th>
+                <div class="table-fixed-note">
+                    <strong>KOSPI</strong>
+                    <span>${escapeHtml(kospiMetaText)}</span>
+                </div>
+            </th>
             ${slotInputs}
         </tr>
     `;

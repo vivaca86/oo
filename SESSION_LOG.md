@@ -109,3 +109,9 @@
 - User reported intermittent `초당 거래건수를 초과하였습니다.` even with a small slot count.
 - Added gateway client-side pacing and rate-limit-aware retries with backoff in frontend adapter logic.
 - Goal: reduce transient load failures by spacing calls more conservatively and retrying automatically on rate-limit responses.
+
+### Slot minimization + KOSPI monthly aggregate
+
+- On additional user request, lowered minimum/default slot count to `1` for aggressive load reduction tests.
+- Expanded slot-count selector range to `1~7`.
+- Added KOSPI header monthly equal-rate aggregate text to match stock slot aggregate display.

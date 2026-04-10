@@ -59,7 +59,7 @@ Build a stock equal-rate web app that behaves like the user's Google Sheet model
 - `config.js` has the gateway URL set.
 - `config.js` now sets `realtimeUrl` to `https://oo-l347.onrender.com/stream`.
 - Realtime relay is deployed on Render: `https://oo-l347.onrender.com`.
-- Stock slot UI now starts at 3 slots but supports user-adjustable range 3~7 from the page control.
+- Stock slot UI now starts at 1 slot but supports user-adjustable range 1~7 from the page control.
 - Frontend logic already supports:
   - realtime relay via SSE when `realtimeUrl` exists
   - REST fallback if the relay is absent or fails
