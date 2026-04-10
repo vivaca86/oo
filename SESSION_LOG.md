@@ -145,6 +145,9 @@
 - In SHEET mode, month handlers now read date + target column equal-rate values from sheet and build response rows without KIS calls.
 - Added `sheet-sync-targets` action so frontend-selected stock tickers can be written to `B2/C2~I2` flow before reading sheet-driven equal rates.
 - Added health debug payload (`dataSource`, configured/resolved sheet info) so users can verify which spreadsheet/sheet is actually connected.
+- Fixed SHEET parsing edge cases:
+  - date strings like `04-09` / `04/09` are now interpreted with current year
+  - percentage strings like `3.06%` are now parsed as `0.0306`
 
 ### Apps Script redeploy URL update
 

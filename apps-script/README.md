@@ -15,6 +15,10 @@ It exposes eight GET actions:
 
 `action=health` 응답에는 `dataSource` 및 `sheet`(연결된 스프레드시트 ID/시트명 디버그 정보)가 포함됩니다.
 
+SHEET 모드 시트 값 파싱 참고:
+- 날짜 컬럼: `yyyy-mm-dd`, `yyyymmdd`, `mm-dd`, `mm/dd` 지원
+- 등가률 컬럼: `0.0306` 또는 `3.06%` 형식 모두 지원
+
 ## What It Does
 
 - Resolves stock names to codes using the official KIS master files.

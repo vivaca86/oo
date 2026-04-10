@@ -64,6 +64,7 @@ Build a stock equal-rate web app that behaves like the user's Google Sheet model
 - Gateway supports a `DATA_SOURCE=SHEET` mode to read equal-rate rows from a Google Spreadsheet instead of KIS API calls.
 - In `DATA_SOURCE=SHEET`, frontend can call `sheet-sync-targets` to push selected tickers into sheet input cells before month reads.
 - Gateway `health` now returns sheet debug metadata (`spreadsheetId`, configured/resolved sheet name) for deployment validation.
+- SHEET mode parser supports percent cells (e.g., `3.06%`) and short date strings (`04-09`, `04/09`) in sheet rows.
 - Frontend logic already supports:
   - realtime relay via SSE when `realtimeUrl` exists
   - REST fallback if the relay is absent or fails

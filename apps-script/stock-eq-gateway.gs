@@ -517,12 +517,32 @@ function parseSheetDateToIso_(value) {
   if (!raw) return null;
   if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
   if (/^\d{8}$/.test(raw)) return basicToIso_(raw);
+  if (/^\d{1,2}-\d{1,2}$/.test(raw)) {
+    var year = todayIsoKst_().slice(0, 4);
+    var parts = raw.split('-');
+    var month = ('0' + Number(parts[0])).slice(-2);
+    var day = ('0' + Number(parts[1])).slice(-2);
+    return year + '-' + month + '-' + day;
+  }
+  if (/^\d{1,2}\/\d{1,2}$/.test(raw)) {
+    var yearSlash = todayIsoKst_().slice(0, 4);
+    var slashParts = raw.split('/');
+    var slashMonth = ('0' + Number(slashParts[0])).slice(-2);
+    var slashDay = ('0' + Number(slashParts[1])).slice(-2);
+    return yearSlash + '-' + slashMonth + '-' + slashDay;
+  }
   return null;
 }
 
 function toEqualRateNumber_(value) {
-  var parsed = toNumber_(value);
+  if (value === null || value === undefined || value === '') return null;
+  var raw = String(value).trim();
+  var hasPercent = raw.indexOf('%') >= 0;
+  var parsed = Number(raw.replace(/,/g, '').replace(/%/g, ''));
   if (!isFiniteNumber_(parsed)) return null;
+  if (hasPercent) {
+    return parsed / 100;
+  }
   if (Math.abs(parsed) > 1) {
     return parsed / 100;
   }
